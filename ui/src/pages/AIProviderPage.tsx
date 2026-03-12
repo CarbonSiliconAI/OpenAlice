@@ -70,9 +70,9 @@ export function AIProviderPage() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-5">
+      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6">
         {config && (
-          <div className="max-w-[640px] space-y-8">
+          <div className="max-w-[640px] space-y-5">
             {/* Backend */}
             <Section id="backend" title="Backend" description="Runtime switch between AI backends. Claude Code calls the local CLI; Vercel AI SDK calls the API directly; Agent SDK uses the programmatic SDK. Changes take effect immediately.">
               <div className="flex border border-border rounded-lg overflow-hidden">

@@ -48,7 +48,7 @@ export function ConnectorsPage() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 md:px-6 py-5">
         {config && (
-          <div className="max-w-[640px] space-y-8">
+          <div className="max-w-[640px] space-y-5">
             {/* Connector selector cards */}
             <Section
               title="Active Connectors"

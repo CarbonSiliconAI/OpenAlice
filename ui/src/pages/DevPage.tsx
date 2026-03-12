@@ -17,7 +17,7 @@ export function DevPage() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 md:px-6 py-5">
-        <div className="max-w-[640px] space-y-8">
+        <div className="max-w-[640px] space-y-5">
           <RegistrySection />
           <SendSection />
           <SessionsSection />

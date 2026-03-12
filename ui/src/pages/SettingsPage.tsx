@@ -20,17 +20,17 @@ export function SettingsPage() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-5">
+      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6">
         {config && (
-          <div className="max-w-[640px] space-y-8">
+          <div className="max-w-[640px] space-y-5">
             {/* Agent */}
             <Section id="agent" title="Agent" description="Controls file-system and tool permissions for the AI. Changes apply on the next request.">
-              <div className="flex items-center justify-between">
-                <div className="flex-1 mr-3">
-                  <span className="text-sm">
-                    Evolution Mode: {config.agent?.evolutionMode ? 'Enabled' : 'Disabled'}
+              <div className="flex items-center justify-between gap-4 py-1">
+                <div className="flex-1">
+                  <span className="text-sm font-medium text-text">
+                    Evolution Mode
                   </span>
-                  <p className="text-[11px] text-text-muted mt-0.5">
+                  <p className="text-[12px] text-text-muted mt-0.5 leading-relaxed">
                     {config.agent?.evolutionMode
                       ? 'Full project access — AI can modify source code'
                       : 'Sandbox mode — AI can only edit data/brain/'}
@@ -51,11 +51,9 @@ export function SettingsPage() {
             </Section>
 
             {/* Compaction */}
-            <Section id="compaction" title="Compaction" description="Context window management. When conversation size approaches Max Context minus Max Output tokens, older messages are automatically summarized to free up space. Set Max Context to match your model's context limit.">
+            <Section id="compaction" title="Compaction" description="Context window management. When conversation size approaches Max Context minus Max Output tokens, older messages are automatically summarized to free up space.">
               <CompactionForm config={config} />
             </Section>
-
-
           </div>
         )}
       </div>
