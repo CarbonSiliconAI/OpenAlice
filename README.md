@@ -23,7 +23,7 @@ Your one-person Wall Street. Alice is an AI trading agent that gives you your ow
 
 ## Features
 
-- **Multi-provider AI** — switch between Claude Code CLI, Vercel AI SDK, and Agent SDK at runtime, no restart needed
+- **Multi-provider AI** — switch between Claude (via Agent SDK with OAuth or API key) and Vercel AI SDK at runtime, no restart needed
 - **Unified Trading Account (UTA)** — each trading account is a self-contained entity that owns its broker connection, git-like operation history, and guard pipeline. AI interacts with UTAs, never with brokers directly. All order types use IBKR's type system (`@traderalice/ibkr`) as the single source of truth, with Alpaca and CCXT adapting to it
 - **Trading-as-Git** — stage orders, commit with a message, push to execute. Every commit gets an 8-char hash. Full history reviewable via `tradingLog` / `tradingShow`
 - **Guard pipeline** — pre-execution safety checks (max position size, cooldown, symbol whitelist) that run inside each UTA before orders reach the broker
@@ -39,7 +39,7 @@ Your one-person Wall Street. Alice is an AI trading agent that gives you your ow
 
 ## Key Concepts
 
-**Provider** — The AI backend that powers Alice. Claude Code (subprocess), Vercel AI SDK (in-process), or Agent SDK (`@anthropic-ai/claude-agent-sdk`). Switchable at runtime via `ai-provider.json`.
+**Provider** — The AI backend that powers Alice. Claude (via `@anthropic-ai/claude-agent-sdk`, supports OAuth login or API key) or Vercel AI SDK (direct API calls to Anthropic, OpenAI, Google). Switchable at runtime via `ai-provider.json`.
 
 **Extension** — A self-contained tool package registered in ToolCenter. Each extension owns its tools, state, and persistence. Examples: trading, brain, analysis-kit.
 
@@ -64,9 +64,8 @@ Your one-person Wall Street. Alice is an AI trading agent that gives you your ow
 ```mermaid
 graph LR
   subgraph Providers
-    CC[Claude Code CLI]
+    AS[Claude / Agent SDK]
     VS[Vercel AI SDK]
-    AS[Agent SDK]
   end
 
   subgraph Core
@@ -102,12 +101,12 @@ graph LR
     MCP[MCP Server]
   end
 
-  CC --> PR
-  VS --> PR
   AS --> PR
+  VS --> PR
   PR --> AC
   AC --> S
   TC -->|Vercel tools| VS
+  TC -->|in-process MCP| AS
   TC -->|MCP tools| MCP
   OBB --> AK
   OBB --> NC
@@ -128,7 +127,7 @@ graph LR
   MCP --> AC
 ```
 
-**Providers** — interchangeable AI backends. Claude Code spawns `claude -p` as a subprocess; Vercel AI SDK runs a `ToolLoopAgent` in-process; Agent SDK uses `@anthropic-ai/claude-agent-sdk`. `ProviderRouter` reads `ai-provider.json` on each call to select the active backend at runtime.
+**Providers** — interchangeable AI backends. Claude (Agent SDK) uses `@anthropic-ai/claude-agent-sdk` with tools delivered via in-process MCP — supports Claude Pro/Max OAuth login or API key. Vercel AI SDK runs a `ToolLoopAgent` in-process with direct API calls. `ProviderRouter` reads `ai-provider.json` on each call to select the active backend at runtime.
 
 **Core** — `AgentCenter` is the top-level orchestration center that routes all calls (both stateless and session-aware) through `ProviderRouter`. `ToolCenter` is a centralized tool registry — extensions register tools there, and it exports them in Vercel AI SDK and MCP formats. `EventLog` provides persistent append-only event storage (JSONL) with real-time subscriptions and crash recovery. `ConnectorCenter` tracks which channel the user last spoke through.
 
@@ -149,7 +148,7 @@ pnpm install && pnpm build
 pnpm dev
 ```
 
-Open [localhost:3002](http://localhost:3002) and start chatting. No API keys or config needed — the default setup uses Claude Code as the AI backend with your existing login.
+Open [localhost:3002](http://localhost:3002) and start chatting. No API keys or config needed — the default setup uses your local Claude Code login (Claude Pro/Max subscription).
 
 ```bash
 pnpm dev        # start backend (port 3002) with watch mode
@@ -164,7 +163,7 @@ pnpm test       # run tests
 
 All config lives in `data/config/` as JSON files with Zod validation. Missing files fall back to sensible defaults. You can edit these files directly or use the Web UI.
 
-**AI Provider** — The default provider is Claude Code (`claude -p` subprocess). To use the [Vercel AI SDK](https://sdk.vercel.ai/docs) instead (Anthropic, OpenAI, Google, etc.), switch `ai-provider.json` to `vercel-ai-sdk` and add your API key to `api-keys.json`. A third option, Agent SDK (`@anthropic-ai/claude-agent-sdk`), is also available via `agent-sdk`.
+**AI Provider** — The default provider is Claude (Agent SDK), which uses your local Claude Code login — no API key needed. To use the [Vercel AI SDK](https://sdk.vercel.ai/docs) instead (Anthropic, OpenAI, Google, etc.), switch `ai-provider.json` to `vercel-ai-sdk` and add your API key. Both can be switched at runtime via the Web UI.
 
 **Trading** — Unified Trading Account (UTA) architecture. Define platforms in `platforms.json` (CCXT exchanges, Alpaca), then create accounts in `accounts.json` referencing a platform. Each account becomes a UTA with its own git history and guard config. Legacy `crypto.json` and `securities.json` are still supported.
 
@@ -172,8 +171,7 @@ All config lives in `data/config/` as JSON files with Zod validation. Missing fi
 |------|---------|
 | `engine.json` | Trading pairs, tick interval, timeframe |
 | `agent.json` | Max agent steps, evolution mode toggle, Claude Code tool permissions |
-| `ai-provider.json` | Active AI provider (`claude-code`, `vercel-ai-sdk`, or `agent-sdk`), switchable at runtime |
-| `api-keys.json` | AI provider API keys (Anthropic, OpenAI, Google) — only needed for Vercel AI SDK mode |
+| `ai-provider.json` | Active AI provider (`agent-sdk` or `vercel-ai-sdk`), login method, switchable at runtime |
 | `platforms.json` | Trading platform definitions (CCXT exchanges, Alpaca) |
 | `accounts.json` | Trading account credentials and guard config, references platforms |
 | `crypto.json` | CCXT exchange config + API keys, allowed symbols, guards |
@@ -218,9 +216,8 @@ src/
     media-store.ts           # Media file persistence
     types.ts                 # Plugin, EngineContext interfaces
   ai-providers/
-    claude-code/             # Claude Code CLI subprocess wrapper
     vercel-ai-sdk/           # Vercel AI SDK ToolLoopAgent wrapper
-    agent-sdk/               # Agent SDK (@anthropic-ai/claude-agent-sdk) wrapper
+    agent-sdk/               # Claude backend (@anthropic-ai/claude-agent-sdk, OAuth + API key)
   extension/
     analysis-kit/            # Indicator calculator and market data tools
     equity/                  # Equity fundamentals and data adapter

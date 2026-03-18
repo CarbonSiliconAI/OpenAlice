@@ -32,9 +32,8 @@ src/
 │   ├── media-store.ts         # Media file persistence
 │   └── types.ts               # Plugin, EngineContext interfaces
 ├── ai-providers/
-│   ├── claude-code/           # Claude Code CLI subprocess
 │   ├── vercel-ai-sdk/         # Vercel AI SDK ToolLoopAgent
-│   └── agent-sdk/             # Agent SDK (@anthropic-ai/claude-agent-sdk)
+│   └── agent-sdk/             # Claude backend (@anthropic-ai/claude-agent-sdk, supports OAuth + API key)
 ├── domain/
 │   ├── market-data/           # Structured data layer (typebb in-process + OpenBB API remote)
 │   ├── trading/               # Unified multi-account trading, guard pipeline, git-like commits
@@ -72,10 +71,9 @@ Two layers (Engine was removed):
 
 1. **AgentCenter** (`core/agent-center.ts`) — top-level orchestration. Manages sessions, compaction, and routes calls through GenerateRouter. Exposes `ask()` (stateless) and `askWithSession()` (with history).
 
-2. **GenerateRouter** (`core/ai-provider-manager.ts`) — reads `ai-provider.json` on each call, resolves to active provider. Three backends:
-   - Claude Code CLI (`inputKind: 'text'`)
-   - Vercel AI SDK (`inputKind: 'messages'`)
-   - Agent SDK (`inputKind: 'text'`)
+2. **GenerateRouter** (`core/ai-provider-manager.ts`) — reads `ai-provider.json` on each call, resolves to active provider. Two backends:
+   - Agent SDK (`inputKind: 'text'`) — Claude via @anthropic-ai/claude-agent-sdk, tools via in-process MCP
+   - Vercel AI SDK (`inputKind: 'messages'`) — direct API calls, tools via Vercel tool system
 
 **AIProvider interface**: `ask(prompt)` for one-shot, `generate(input, opts)` for streaming `ProviderEvent` (tool_use / tool_result / text / done). Optional `compact()` for provider-native compaction.
 

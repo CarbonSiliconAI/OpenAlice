@@ -6,9 +6,9 @@ import { useAutoSave, type SaveStatus } from '../hooks/useAutoSave'
 import { PageHeader } from '../components/PageHeader'
 import { PageLoading } from '../components/StateViews'
 
-const LOGIN_METHODS: { value: LoginMethod; label: string; description: string }[] = [
-  { value: 'api-key', label: 'API Key', description: 'Use Anthropic API key' },
-  { value: 'claudeai', label: 'Claude Pro/Max', description: 'Claude.ai subscription billing via Claude Code login' },
+const LOGIN_METHODS: { value: LoginMethod; label: string; subtitle: string; hint: string }[] = [
+  { value: 'claudeai', label: 'Claude Pro/Max', subtitle: 'Use your Claude subscription', hint: 'Requires local Claude Code login (run claude login in terminal). No API key needed.' },
+  { value: 'api-key', label: 'API Key', subtitle: 'Pay per token', hint: 'Enter your Anthropic API key below. Billed per token to your API account.' },
 ]
 
 const PROVIDER_MODELS: Record<string, { label: string; value: string }[]> = {
@@ -49,6 +49,31 @@ function detectCustomMode(provider: string, model: string): boolean {
   return !presets.some((p) => p.value === model)
 }
 
+function BackendCard({ selected, onClick, icon, title, description }: {
+  selected: boolean
+  onClick: () => void
+  icon: React.ReactNode
+  title: string
+  description: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex flex-col items-start gap-2 p-4 rounded-xl border-2 text-left transition-all cursor-pointer ${
+        selected
+          ? 'border-accent bg-accent-dim/50'
+          : 'border-border bg-bg hover:border-text-muted/30 hover:bg-bg-tertiary'
+      }`}
+    >
+      <div className={`${selected ? 'text-accent' : 'text-text-muted'}`}>{icon}</div>
+      <div>
+        <p className={`text-[13px] font-semibold ${selected ? 'text-accent' : 'text-text'}`}>{title}</p>
+        <p className="text-[11px] text-text-muted mt-0.5 leading-snug">{description}</p>
+      </div>
+    </button>
+  )
+}
+
 export function AIProviderPage() {
   const [config, setConfig] = useState<AppConfig | null>(null)
 
@@ -76,27 +101,28 @@ export function AIProviderPage() {
       <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6">
           <div className="max-w-[640px] space-y-5">
             {/* Backend */}
-            <Section id="backend" title="Backend" description="Runtime switch between AI backends. Agent SDK uses the Claude Code CLI via programmatic SDK; Vercel AI SDK calls the API directly. Changes take effect immediately.">
-              <div className="flex border border-border rounded-lg overflow-hidden">
-                {(['agent-sdk', 'vercel-ai-sdk'] as const).map((b, i) => (
-                  <button
-                    key={b}
-                    onClick={() => handleBackendSwitch(b)}
-                    className={`flex-1 py-2 px-3 text-[13px] font-medium transition-colors ${
-                      config.aiProvider.backend === b
-                        ? 'bg-accent-dim text-accent'
-                        : 'bg-bg text-text-muted hover:bg-bg-tertiary hover:text-text'
-                    } ${i > 0 ? 'border-l border-border' : ''}`}
-                  >
-                    {{ 'agent-sdk': 'Agent SDK', 'vercel-ai-sdk': 'Vercel AI SDK' }[b]}
-                  </button>
-                ))}
+            <Section id="backend" title="Backend" description="Changes take effect immediately.">
+              <div className="grid grid-cols-2 gap-3">
+                <BackendCard
+                  selected={config.aiProvider.backend === 'agent-sdk'}
+                  onClick={() => handleBackendSwitch('agent-sdk')}
+                  icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a4 4 0 0 1 4 4v1a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V6a4 4 0 0 1 4-4z" /><path d="M8 8v2a4 4 0 0 0 8 0V8" /><path d="M12 14v4" /><path d="M8 22h8" /><circle cx="9" cy="5.5" r="0.5" fill="currentColor" stroke="none" /><circle cx="15" cy="5.5" r="0.5" fill="currentColor" stroke="none" /></svg>}
+                  title="Claude"
+                  description="Local Claude Code login with full tool access"
+                />
+                <BackendCard
+                  selected={config.aiProvider.backend === 'vercel-ai-sdk'}
+                  onClick={() => handleBackendSwitch('vercel-ai-sdk')}
+                  icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>}
+                  title="Vercel AI SDK"
+                  description="Direct API calls to Anthropic, OpenAI, Google"
+                />
               </div>
             </Section>
 
             {/* Auth mode (only for Agent SDK) */}
             {config.aiProvider.backend === 'agent-sdk' && (
-              <Section id="auth" title="Authentication" description="How Agent SDK authenticates with Anthropic. OAuth modes use your local Claude Code login.">
+              <Section id="auth" title="Authentication" description="Choose how Alice connects to Claude.">
                 <AgentSdkAuthForm aiProvider={config.aiProvider} onUpdate={(patch) => setConfig((c) => c ? { ...c, aiProvider: { ...c.aiProvider, ...patch } } : c)} />
               </Section>
             )}
@@ -403,26 +429,23 @@ function AgentSdkAuthForm({ aiProvider, onUpdate }: { aiProvider: AIProviderConf
 
   return (
     <>
-      <Field label="Login Method">
-        <div className="flex border border-border rounded-lg overflow-hidden">
-          {LOGIN_METHODS.map((m, i) => (
-            <button
-              key={m.value}
-              onClick={() => handleLoginMethodChange(m.value)}
-              className={`flex-1 py-2 px-3 text-[13px] font-medium transition-colors ${
-                loginMethod === m.value
-                  ? 'bg-accent-dim text-accent'
-                  : 'bg-bg text-text-muted hover:bg-bg-tertiary hover:text-text'
-              } ${i > 0 ? 'border-l border-border' : ''}`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-        <p className="text-[11px] text-text-muted mt-1">
-          {LOGIN_METHODS.find((m) => m.value === loginMethod)?.description}
-        </p>
-      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        {LOGIN_METHODS.map((m) => (
+          <BackendCard
+            key={m.value}
+            selected={loginMethod === m.value}
+            onClick={() => handleLoginMethodChange(m.value)}
+            icon={m.value === 'claudeai'
+              ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" /></svg>
+              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>}
+            title={m.label}
+            description={m.subtitle}
+          />
+        ))}
+      </div>
+      <p className="text-[11px] text-text-muted mt-2">
+        {LOGIN_METHODS.find((m) => m.value === loginMethod)?.hint}
+      </p>
 
       {loginMethod === 'api-key' && (
         <Field label="Anthropic API Key">
