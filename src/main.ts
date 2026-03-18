@@ -1,7 +1,7 @@
 import { readFile, writeFile, appendFile, mkdir } from 'fs/promises'
 import { resolve, dirname } from 'path'
 // Engine removed — AgentCenter is the top-level AI entry point
-import { loadConfig, loadTradingConfig } from './core/config.js'
+import { loadConfig, loadTradingConfig, setOnConfigChange } from './core/config.js'
 import type { Plugin, EngineContext, ReconnectResult } from './core/types.js'
 import { McpPlugin } from './server/mcp.js'
 import { TelegramPlugin } from './connectors/telegram/index.js'
@@ -400,9 +400,16 @@ async function main() {
   const corePlugins: Plugin[] = []
 
   // MCP Server is always active when a port is set — Claude Code provider depends on it for tools
+  let mcpPlugin: McpPlugin | null = null
   if (config.connectors.mcp.port) {
-    corePlugins.push(new McpPlugin(toolCenter, config.connectors.mcp.port))
+    mcpPlugin = new McpPlugin(toolCenter, config.connectors.mcp.port)
+    corePlugins.push(mcpPlugin)
   }
+
+  // Config changes → restart MCP so tool list stays in sync
+  setOnConfigChange(() => {
+    mcpPlugin?.restart().catch(err => console.error('mcp: restart after config change failed:', err))
+  })
 
   // Web UI is always active (no enabled flag)
   if (config.connectors.web.port) {

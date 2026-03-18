@@ -3,7 +3,6 @@ import { cors } from 'hono/cors'
 import { serve } from '@hono/node-server'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
-import type { Tool } from 'ai'
 import type { Plugin, EngineContext } from '../core/types.js'
 import type { ToolCenter } from '../core/tool-center.js'
 
@@ -50,53 +49,65 @@ function toMcpContent(result: unknown): McpContent[] {
 /**
  * MCP Plugin — exposes tools via Streamable HTTP.
  *
- * Holds a reference to ToolCenter and queries it per-request, so tool
- * changes (reconnect, disable/enable) are picked up automatically.
+ * Creates McpServer + transport once at startup. Supports restart()
+ * for config changes — tears down and rebuilds with fresh tool list.
  */
 export class McpPlugin implements Plugin {
   name = 'mcp'
-  private server: ReturnType<typeof serve> | null = null
+  private httpServer: ReturnType<typeof serve> | null = null
+  private mcp: McpServer | null = null
+  private transport: WebStandardStreamableHTTPServerTransport | null = null
+  private ctx: EngineContext | null = null
 
   constructor(
     private toolCenter: ToolCenter,
     private port: number,
   ) {}
 
-  async start(_ctx: EngineContext) {
-    const toolCenter = this.toolCenter
+  async start(ctx: EngineContext) {
+    this.ctx = ctx
 
-    const createMcpServer = async () => {
-      const tools = await toolCenter.getMcpTools()
-      const mcp = new McpServer({ name: 'open-alice', version: '1.0.0' })
+    // 1. Create McpServer and register all tools
+    const tools = await this.toolCenter.getMcpTools()
+    const mcp = new McpServer({ name: 'open-alice', version: '1.0.0' })
 
-      for (const [name, t] of Object.entries(tools)) {
-        if (!t.execute) continue
+    for (const [name, t] of Object.entries(tools)) {
+      if (!t.execute) continue
 
-        // Extract raw shape from z.object() for MCP's inputSchema
-        const shape = (t.inputSchema as any)?.shape ?? {}
+      const shape = (t.inputSchema as any)?.shape ?? {}
 
-        mcp.registerTool(name, {
-          description: t.description,
-          inputSchema: shape,
-        }, async (args: any) => {
-          try {
-            const result = await t.execute!(args, {
-              toolCallId: crypto.randomUUID(),
-              messages: [],
-            })
-            return { content: toMcpContent(result) }
-          } catch (err) {
-            return {
-              content: [{ type: 'text' as const, text: `Error: ${err}` }],
-              isError: true,
-            }
+      mcp.registerTool(name, {
+        description: t.description,
+        inputSchema: shape,
+      }, async (args: any) => {
+        try {
+          const result = await t.execute!(args, {
+            toolCallId: crypto.randomUUID(),
+            messages: [],
+          })
+          return { content: toMcpContent(result) }
+        } catch (err) {
+          return {
+            content: [{ type: 'text' as const, text: `Error: ${err}` }],
+            isError: true,
           }
-        })
-      }
-
-      return mcp
+        }
+      })
     }
 
+    // 2. Create transport (stateful with session management)
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: () => crypto.randomUUID(),
+    })
+
+    // 3. Connect server ↔ transport
+    await mcp.connect(transport)
+    this.mcp = mcp
+    this.transport = transport
+
+    console.log(`mcp: ${Object.keys(tools).length} tools registered`)
+
+    // 4. Route all requests to the shared transport
     const app = new Hono()
 
     app.use('*', cors({
@@ -106,19 +117,26 @@ export class McpPlugin implements Plugin {
       exposeHeaders: ['mcp-session-id', 'mcp-protocol-version'],
     }))
 
-    app.all('/mcp', async (c) => {
-      const transport = new WebStandardStreamableHTTPServerTransport()
-      const mcp = await createMcpServer()
-      await mcp.connect(transport)
-      return transport.handleRequest(c.req.raw)
-    })
+    app.all('/mcp', async (c) => transport.handleRequest(c.req.raw))
 
-    this.server = serve({ fetch: app.fetch, port: this.port }, (info) => {
+    this.httpServer = serve({ fetch: app.fetch, port: this.port }, (info) => {
       console.log(`mcp plugin listening on http://localhost:${info.port}/mcp`)
     })
   }
 
+  /** Tear down and rebuild with fresh tool list from ToolCenter. */
+  async restart() {
+    if (!this.ctx) return
+    console.log('mcp: restarting (config change)')
+    await this.stop()
+    await this.start(this.ctx)
+  }
+
   async stop() {
-    this.server?.close()
+    this.httpServer?.close()
+    this.httpServer = null
+    await this.transport?.close()
+    this.transport = null
+    this.mcp = null
   }
 }
