@@ -258,7 +258,7 @@ export function PushApprovalPanel() {
                     <button
                       onClick={() => handlePush(account.id)}
                       disabled={pushing !== null}
-                      className="px-2 py-1 rounded font-medium bg-accent text-white hover:bg-accent/80 disabled:opacity-50 transition-colors"
+                      className="btn-primary-sm"
                     >
                       {pushing === account.id ? '...' : 'Confirm'}
                     </button>
@@ -274,7 +274,7 @@ export function PushApprovalPanel() {
                     <button
                       onClick={() => setConfirmingPush(account.id)}
                       disabled={pushing !== null || rejecting !== null}
-                      className="flex-1 text-xs px-3 py-1.5 rounded font-medium bg-accent text-white hover:bg-accent/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="flex-1 btn-primary-sm"
                     >
                       Approve & Push
                     </button>

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { api, type AppConfig } from '../api'
 import { Toggle } from '../components/Toggle'
 import { SaveIndicator } from '../components/SaveIndicator'
-import { Section, Field, inputClass } from '../components/form'
+import { ConfigSection, Field, inputClass } from '../components/form'
 import { useAutoSave } from '../hooks/useAutoSave'
 import { PageHeader } from '../components/PageHeader'
 import { PageLoading } from '../components/StateViews'
@@ -19,10 +19,10 @@ export function SettingsPage() {
       <PageHeader title="Settings" />
 
       {config ? (
-      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6">
-          <div className="max-w-[640px] space-y-5">
+      <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
+          <div className="max-w-[880px] mx-auto">
             {/* Agent */}
-            <Section id="agent" title="Agent" description="Controls file-system and tool permissions for the AI. Changes apply on the next request.">
+            <ConfigSection title="Agent" description="Controls file-system and tool permissions for the AI. Changes apply on the next request.">
               <div className="flex items-center justify-between gap-4 py-1">
                 <div className="flex-1">
                   <span className="text-sm font-medium text-text">
@@ -46,12 +46,12 @@ export function SettingsPage() {
                   }}
                 />
               </div>
-            </Section>
+            </ConfigSection>
 
             {/* Compaction */}
-            <Section id="compaction" title="Compaction" description="Context window management. When conversation size approaches Max Context minus Max Output tokens, older messages are automatically summarized to free up space.">
+            <ConfigSection title="Compaction" description="Context window management. When conversation size approaches Max Context minus Max Output tokens, older messages are automatically summarized to free up space.">
               <CompactionForm config={config} />
-            </Section>
+            </ConfigSection>
           </div>
       </div>
       ) : (

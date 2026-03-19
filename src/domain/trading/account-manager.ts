@@ -6,7 +6,7 @@
  */
 
 import type { Contract, ContractDescription, ContractDetails } from '@traderalice/ibkr'
-import type { AccountCapabilities } from './brokers/types.js'
+import type { AccountCapabilities, BrokerHealth, BrokerHealthInfo } from './brokers/types.js'
 import type { UnifiedTradingAccount } from './UnifiedTradingAccount.js'
 import './contract-ext.js'
 
@@ -17,6 +17,7 @@ export interface AccountSummary {
   label: string
   platformId?: string
   capabilities: AccountCapabilities
+  health: BrokerHealthInfo
 }
 
 // ==================== Aggregated equity ====================
@@ -32,6 +33,7 @@ export interface AggregatedEquity {
     equity: number
     cash: number
     unrealizedPnL: number
+    health: BrokerHealth
   }>
 }
 
@@ -72,6 +74,7 @@ export class AccountManager {
       label: uta.label,
       platformId: uta.platformId,
       capabilities: uta.getCapabilities(),
+      health: uta.getHealthInfo(),
     }))
   }
 
@@ -126,7 +129,7 @@ export class AccountManager {
       Array.from(this.entries.values()).map(async (uta) => {
         try {
           const info = await uta.getAccount()
-          return { id: uta.id, label: uta.label, info }
+          return { id: uta.id, label: uta.label, health: uta.health, info }
         } catch (err) {
           const now = Date.now()
           const lastWarned = this.equityWarnedAt.get(uta.id) ?? 0
@@ -134,7 +137,7 @@ export class AccountManager {
             console.warn(`getAggregatedEquity: ${uta.id} failed, skipping:`, err)
             this.equityWarnedAt.set(uta.id, now)
           }
-          return { id: uta.id, label: uta.label, info: null }
+          return { id: uta.id, label: uta.label, health: uta.health, info: null }
         }
       }),
     )
@@ -145,18 +148,20 @@ export class AccountManager {
     let totalRealizedPnL = 0
     const accounts: AggregatedEquity['accounts'] = []
 
-    for (const { id, label, info } of results) {
-      if (!info) continue
-      totalEquity += info.netLiquidation
-      totalCash += info.totalCashValue
-      totalUnrealizedPnL += info.unrealizedPnL
-      totalRealizedPnL += info.realizedPnL
+    for (const { id, label, health, info } of results) {
+      if (info) {
+        totalEquity += info.netLiquidation
+        totalCash += info.totalCashValue
+        totalUnrealizedPnL += info.unrealizedPnL
+        totalRealizedPnL += info.realizedPnL ?? 0
+      }
       accounts.push({
         id,
         label,
-        equity: info.netLiquidation,
-        cash: info.totalCashValue,
-        unrealizedPnL: info.unrealizedPnL,
+        equity: info?.netLiquidation ?? 0,
+        cash: info?.totalCashValue ?? 0,
+        unrealizedPnL: info?.unrealizedPnL ?? 0,
+        health,
       })
     }
 

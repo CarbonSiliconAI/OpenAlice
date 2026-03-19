@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { api, type AppConfig, type AIProviderConfig, type LoginMethod } from '../api'
 import { SaveIndicator } from '../components/SaveIndicator'
-import { Section, Field, inputClass } from '../components/form'
+import { ConfigSection, Field, inputClass } from '../components/form'
 import { useAutoSave, type SaveStatus } from '../hooks/useAutoSave'
 import { PageHeader } from '../components/PageHeader'
 import { PageLoading } from '../components/StateViews'
@@ -98,10 +98,10 @@ export function AIProviderPage() {
       <PageHeader title="AI Provider" description="Configure the AI backend, model, and API keys." />
 
       {config ? (
-      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6">
-          <div className="max-w-[640px] space-y-5">
+      <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
+          <div className="max-w-[880px] mx-auto">
             {/* Backend */}
-            <Section id="backend" title="Backend" description="Changes take effect immediately.">
+            <ConfigSection title="Backend" description="Changes take effect immediately.">
               <div className="grid grid-cols-2 gap-3">
                 <BackendCard
                   selected={config.aiProvider.backend === 'agent-sdk'}
@@ -118,20 +118,20 @@ export function AIProviderPage() {
                   description="Direct API calls to Anthropic, OpenAI, Google"
                 />
               </div>
-            </Section>
+            </ConfigSection>
 
             {/* Auth mode (only for Agent SDK) */}
             {config.aiProvider.backend === 'agent-sdk' && (
-              <Section id="auth" title="Authentication" description="Choose how Alice connects to Claude.">
+              <ConfigSection title="Authentication" description="Choose how Alice connects to Claude.">
                 <AgentSdkAuthForm aiProvider={config.aiProvider} onUpdate={(patch) => setConfig((c) => c ? { ...c, aiProvider: { ...c.aiProvider, ...patch } } : c)} />
-              </Section>
+              </ConfigSection>
             )}
 
             {/* Model (only for Vercel AI SDK) */}
             {config.aiProvider.backend === 'vercel-ai-sdk' && (
-              <Section id="model" title="Model" description="Provider, model, and API keys for Vercel AI SDK. Changes take effect on the next request (hot-reload).">
+              <ConfigSection title="Model" description="Provider, model, and API keys for Vercel AI SDK. Changes take effect on the next request (hot-reload).">
                 <ModelForm aiProvider={config.aiProvider} />
-              </Section>
+              </ConfigSection>
             )}
           </div>
       </div>
@@ -382,7 +382,7 @@ function ModelForm({ aiProvider }: { aiProvider: AIProviderConfig }) {
               <button
                 onClick={handleSaveKeys}
                 disabled={keySaveStatus === 'saving'}
-                className="bg-user-bubble text-white rounded-lg px-4 py-2 text-[13px] font-medium cursor-pointer transition-opacity hover:opacity-85 disabled:opacity-50"
+                className="btn-primary"
               >
                 Save Keys
               </button>
@@ -465,7 +465,7 @@ function AgentSdkAuthForm({ aiProvider, onUpdate }: { aiProvider: AIProviderConf
             <button
               onClick={handleSaveKey}
               disabled={!apiKey || keySaveStatus === 'saving'}
-              className="bg-user-bubble text-white rounded-lg px-4 py-2 text-[13px] font-medium cursor-pointer transition-opacity hover:opacity-85 disabled:opacity-50"
+              className="btn-primary"
             >
               Save Key
             </button>

@@ -330,7 +330,7 @@ function CronSection() {
         <span className="text-xs text-text-muted">{jobs.length} jobs</span>
         <button
           onClick={() => setShowAdd(true)}
-          className="text-xs px-3 py-1.5 rounded-md bg-accent/20 text-accent border border-accent/30 hover:bg-accent/30 transition-colors"
+          className="btn-secondary-sm"
         >
           + Add Job
         </button>
@@ -537,7 +537,7 @@ function AddCronJobForm({ onClose, onCreated }: { onClose: () => void; onCreated
         <button
           type="submit"
           disabled={saving}
-          className="px-3 py-1.5 text-sm rounded-md bg-accent text-white hover:bg-accent/80 transition-colors disabled:opacity-50"
+          className="btn-primary-sm"
         >
           {saving ? 'Creating...' : 'Create'}
         </button>

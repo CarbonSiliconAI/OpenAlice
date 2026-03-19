@@ -321,7 +321,7 @@ export function ChannelConfigModal({ channel, onClose, onSaved }: ChannelConfigM
             <button
               onClick={handleSave}
               disabled={saving}
-              className="text-sm px-4 py-1.5 rounded-lg bg-accent text-white hover:bg-accent/80 transition-colors disabled:opacity-50"
+              className="btn-primary"
             >
               {saving ? 'Saving...' : 'Save'}
             </button>

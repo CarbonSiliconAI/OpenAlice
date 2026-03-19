@@ -103,13 +103,13 @@ export function ToolsPage() {
         right={<SaveIndicator status={status} onRetry={retry} />}
       />
 
-      <div className="flex-1 overflow-y-auto px-4 md:px-6 py-5">
+      <div className="flex-1 overflow-y-auto px-4 md:px-8 py-5">
         {!loaded ? (
           <PageLoading />
         ) : groups.length === 0 ? (
           <EmptyState title="No tools registered." description="Tools will appear here when the engine starts." />
         ) : (
-          <div className="max-w-[720px] space-y-2">
+          <div className="max-w-[880px] mx-auto space-y-2">
             {groups.map((g) => (
               <ToolGroupCard
                 key={g.key}

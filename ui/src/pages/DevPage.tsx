@@ -184,7 +184,7 @@ function SendSection() {
         <button
           onClick={handleSend}
           disabled={sending || !text.trim()}
-          className="px-4 py-1.5 text-sm bg-accent text-white rounded-md hover:opacity-90 disabled:opacity-40 transition-opacity"
+          className="btn-primary-sm"
         >
           {sending ? 'Sending...' : 'Send'}
         </button>

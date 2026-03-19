@@ -119,18 +119,12 @@ async function main() {
   }
   validatePlatformRefs([...platformRegistry.values()], tradingConfig.accounts)
 
-  /** Initialize and register a single account. Returns true if successful. */
+  /** Create and register a UTA. Broker connection happens asynchronously inside UTA. */
   async function initAccount(
     accountCfg: { id: string; platformId: string; guards: Array<{ type: string; options: Record<string, unknown> }> },
     platform: IPlatform,
-  ): Promise<boolean> {
+  ): Promise<UnifiedTradingAccount> {
     const broker = createBrokerFromConfig(platform, accountCfg)
-    try {
-      await broker.init()
-    } catch (err) {
-      console.warn(`trading: ${accountCfg.id} init failed (non-fatal):`, err)
-      return false
-    }
     const savedState = await loadGitState(accountCfg.id)
     const filePath = gitFilePath(accountCfg.id)
     const uta = new UnifiedTradingAccount(broker, {
@@ -140,31 +134,13 @@ async function main() {
       platformId: accountCfg.platformId,
     })
     accountManager.add(uta)
-    console.log(`trading: ${uta.label} initialized`)
-    return true
+    return uta
   }
-
-  // Alpaca accounts — sync init (fast, blocks startup)
-  // CCXT accounts — async background init (loadMarkets is slow)
-  const ccxtAccountConfigs: Array<{ cfg: typeof tradingConfig.accounts[number]; platform: IPlatform }> = []
 
   for (const accCfg of tradingConfig.accounts) {
     const platform = platformRegistry.get(accCfg.platformId)!
-    if (platform.providerType === 'alpaca') {
-      await initAccount(accCfg, platform)
-    } else {
-      ccxtAccountConfigs.push({ cfg: accCfg, platform })
-    }
+    await initAccount(accCfg, platform)
   }
-
-  // CCXT init in background — register tools when ready
-  const ccxtInitPromise = ccxtAccountConfigs.length > 0
-    ? (async () => {
-        for (const { cfg, platform } of ccxtAccountConfigs) {
-          await initAccount(cfg, platform)
-        }
-      })()
-    : Promise.resolve()
 
   // ==================== Brain ====================
 
@@ -519,22 +495,18 @@ async function main() {
 
   console.log('engine: started')
 
-  // ==================== CCXT Background Injection ====================
-  // CCXT accounts init in background (loadMarkets is slow). When done, register
-  // CCXT-specific tools so the next agent call picks them up automatically.
-  ccxtInitPromise.then(() => {
-    // Check if any CCXT accounts were successfully registered
+  // ==================== CCXT Tools ====================
+  // All UTAs are registered synchronously — check if any are CCXT and register provider tools.
+  {
     const hasCcxt = accountManager.resolve().some((uta) => uta.broker instanceof CcxtBroker)
-    if (!hasCcxt) return
-
-    toolCenter.register(
-      createCcxtProviderTools(accountManager),
-      'trading-ccxt',
-    )
-    console.log('ccxt: provider tools registered')
-  }).catch((err) => {
-    console.error('ccxt: background init failed:', err instanceof Error ? err.message : String(err))
-  })
+    if (hasCcxt) {
+      toolCenter.register(
+        createCcxtProviderTools(accountManager),
+        'trading-ccxt',
+      )
+      console.log('ccxt: provider tools registered')
+    }
+  }
 
   // ==================== Shutdown ====================
 

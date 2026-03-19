@@ -369,17 +369,17 @@ function CreateWizard({ existingAccountIds, onSave, onClose }: {
           </button>
         )}
         {step > 1 && (
-          <button onClick={() => { setStep(step - 1); setError('') }} className="px-3 py-1.5 text-[13px] font-medium rounded-md border border-border hover:bg-bg-tertiary transition-colors">
+          <button onClick={() => { setStep(step - 1); setError('') }} className="btn-secondary-sm">
             Back
           </button>
         )}
         {step === 2 && (
-          <button onClick={handleNext} className="px-4 py-1.5 text-[13px] font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors">
+          <button onClick={handleNext} className="btn-primary-sm">
             Next
           </button>
         )}
         {step === 3 && (
-          <button onClick={handleCreate} disabled={saving} className="px-4 py-1.5 text-[13px] font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors">
+          <button onClick={handleCreate} disabled={saving} className="btn-primary-sm">
             {saving ? 'Creating...' : 'Create'}
           </button>
         )}
@@ -523,7 +523,7 @@ function EditDialog({ account, platform, onSaveAccount, onSavePlatform, onDelete
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-4 py-1.5 text-[13px] font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors"
+            className="btn-primary-sm"
           >
             {saving ? 'Saving...' : 'Save'}
           </button>

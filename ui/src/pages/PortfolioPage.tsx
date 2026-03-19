@@ -10,7 +10,7 @@ interface AggregatedEquity {
   totalCash: number
   totalUnrealizedPnL: number
   totalRealizedPnL: number
-  accounts: Array<{ id: string; label: string; equity: number; cash: number }>
+  accounts: Array<{ id: string; label: string; equity: number; cash: number; health?: string }>
 }
 
 interface AccountData {
@@ -63,7 +63,7 @@ export function PortfolioPage() {
   const accountSources = (data.equity?.accounts ?? []).map(eq => {
     const acct = data.accounts.find(a => a.id === eq.id)
     const unrealizedPnL = acct?.positions.reduce((sum, p) => sum + p.unrealizedPnL, 0) ?? 0
-    return { ...eq, provider: acct?.provider ?? '', unrealizedPnL, error: acct?.error }
+    return { ...eq, provider: acct?.provider ?? '', unrealizedPnL, error: acct?.error, health: eq.health }
   })
 
   return (
@@ -179,27 +179,34 @@ function HeroItem({ label, value, pnl }: { label: string; value: string; pnl?: n
 
 // ==================== Account Strip ====================
 
-const PROVIDER_COLORS: Record<string, string> = {
-  ccxt: 'bg-accent',
-  alpaca: 'bg-green',
+const HEALTH_DOT: Record<string, string> = {
+  healthy: 'bg-green',
+  degraded: 'bg-yellow-400',
+  offline: 'bg-red',
 }
 
-function AccountStrip({ sources }: { sources: Array<{ id: string; label: string; provider: string; equity: number; unrealizedPnL: number; error?: string }> }) {
+function AccountStrip({ sources }: { sources: Array<{ id: string; label: string; provider: string; equity: number; unrealizedPnL: number; error?: string; health?: string }> }) {
   return (
     <div className="flex flex-wrap gap-2">
       {sources.map(s => {
-        const dotColor = PROVIDER_COLORS[s.provider] || 'bg-text-muted'
+        const dotColor = HEALTH_DOT[s.health ?? 'healthy'] ?? 'bg-text-muted'
+        const isOffline = s.health === 'offline'
         return (
-          <div key={s.id} className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-bg-secondary text-[12px]">
+          <div key={s.id} className={`flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-bg-secondary text-[12px] ${isOffline ? 'opacity-60' : ''}`}>
             <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
             <span className="text-text font-medium">{s.label}</span>
-            <span className="text-text-muted">{fmt(s.equity)}</span>
-            {s.unrealizedPnL !== 0 && (
-              <span className={s.unrealizedPnL >= 0 ? 'text-green' : 'text-red'}>
-                {fmtPnl(s.unrealizedPnL)}
-              </span>
-            )}
-            {s.error && <span className="text-text-muted/50">{s.error}</span>}
+            {isOffline
+              ? <span className="text-red text-[11px]">Reconnecting…</span>
+              : <>
+                  <span className="text-text-muted">{fmt(s.equity)}</span>
+                  {s.unrealizedPnL !== 0 && (
+                    <span className={s.unrealizedPnL >= 0 ? 'text-green' : 'text-red'}>
+                      {fmtPnl(s.unrealizedPnL)}
+                    </span>
+                  )}
+                </>
+            }
+            {s.error && !isOffline && <span className="text-text-muted/50">{s.error}</span>}
           </div>
         )
       })}

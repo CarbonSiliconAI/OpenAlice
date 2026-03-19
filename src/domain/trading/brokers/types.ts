@@ -102,6 +102,19 @@ export interface MarketClock {
   timestamp?: Date
 }
 
+// ==================== Broker health ====================
+
+export type BrokerHealth = 'healthy' | 'degraded' | 'offline'
+
+export interface BrokerHealthInfo {
+  status: BrokerHealth
+  consecutiveFailures: number
+  lastError?: string
+  lastSuccessAt?: Date
+  lastFailureAt?: Date
+  recovering: boolean
+}
+
 // ==================== Account capabilities ====================
 
 export interface AccountCapabilities {

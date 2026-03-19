@@ -9,7 +9,7 @@
 
 import Decimal from 'decimal.js'
 import { Contract, Order, ContractDescription, ContractDetails } from '@traderalice/ibkr'
-import type { IBroker, AccountInfo, Position, OpenOrder, PlaceOrderResult, Quote, MarketClock, AccountCapabilities } from './brokers/types.js'
+import type { IBroker, AccountInfo, Position, OpenOrder, PlaceOrderResult, Quote, MarketClock, AccountCapabilities, BrokerHealth, BrokerHealthInfo } from './brokers/types.js'
 import { TradingGit } from './git/TradingGit.js'
 import type {
   Operation,
@@ -109,6 +109,19 @@ export class UnifiedTradingAccount {
 
   private readonly _getState: () => Promise<GitState>
 
+  // ---- Health tracking ----
+  private static readonly DEGRADED_THRESHOLD = 3
+  private static readonly OFFLINE_THRESHOLD = 6
+  private static readonly RECOVERY_BASE_MS = 5_000
+  private static readonly RECOVERY_MAX_MS = 60_000
+
+  private _consecutiveFailures = 0
+  private _lastError?: string
+  private _lastSuccessAt?: Date
+  private _lastFailureAt?: Date
+  private _recoveryTimer?: ReturnType<typeof setTimeout>
+  private _recovering = false
+
   constructor(broker: IBroker, options: UnifiedTradingAccountOptions = {}) {
     this.broker = broker
     this.id = broker.id
@@ -118,11 +131,13 @@ export class UnifiedTradingAccount {
     // Wire internals
     this._getState = async (): Promise<GitState> => {
       const pendingIds = this.git.getPendingOrderIds().map(p => p.orderId)
-      const [accountInfo, positions, orders] = await Promise.all([
-        broker.getAccount(),
-        broker.getPositions(),
-        broker.getOrders(pendingIds),
-      ])
+      const [accountInfo, positions, orders] = await this._callBroker(() =>
+        Promise.all([
+          broker.getAccount(),
+          broker.getPositions(),
+          broker.getOrders(pendingIds),
+        ]),
+      )
       // Stamp aliceId on all contracts returned by broker
       for (const p of positions) this.stampAliceId(p.contract)
       for (const o of orders) this.stampAliceId(o.contract)
@@ -130,7 +145,7 @@ export class UnifiedTradingAccount {
         netLiquidation: accountInfo.netLiquidation,
         totalCashValue: accountInfo.totalCashValue,
         unrealizedPnL: accountInfo.unrealizedPnL,
-        realizedPnL: accountInfo.realizedPnL,
+        realizedPnL: accountInfo.realizedPnL ?? 0,
         positions,
         pendingOrders: orders.filter(o => o.orderState.status === 'Submitted' || o.orderState.status === 'PreSubmitted'),
       }
@@ -162,6 +177,105 @@ export class UnifiedTradingAccount {
     this.git = options.savedState
       ? TradingGit.restore(options.savedState, gitConfig)
       : new TradingGit(gitConfig)
+
+    // Kick off broker connection asynchronously — UTA is usable immediately,
+    // broker queries will fail (tracked by health) until init succeeds.
+    this._connect()
+  }
+
+  // ==================== Health ====================
+
+  get health(): BrokerHealth {
+    if (this._consecutiveFailures >= UnifiedTradingAccount.OFFLINE_THRESHOLD) return 'offline'
+    if (this._consecutiveFailures >= UnifiedTradingAccount.DEGRADED_THRESHOLD) return 'degraded'
+    return 'healthy'
+  }
+
+  getHealthInfo(): BrokerHealthInfo {
+    return {
+      status: this.health,
+      consecutiveFailures: this._consecutiveFailures,
+      lastError: this._lastError,
+      lastSuccessAt: this._lastSuccessAt,
+      lastFailureAt: this._lastFailureAt,
+      recovering: this._recovering,
+    }
+  }
+
+  /** Initial broker connection — fire-and-forget from constructor. */
+  private async _connect(): Promise<void> {
+    try {
+      await this.broker.init()
+      await this.broker.getAccount()
+      this._onSuccess()
+      console.log(`UTA[${this.id}]: connected`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`UTA[${this.id}]: initial connect failed: ${msg}`)
+      this._consecutiveFailures = UnifiedTradingAccount.OFFLINE_THRESHOLD
+      this._lastError = msg
+      this._lastFailureAt = new Date()
+      this._startRecovery()
+    }
+  }
+
+  private async _callBroker<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.health === 'offline' && this._recovering) {
+      throw new Error(`Account "${this.label}" is offline and reconnecting. Try again shortly.`)
+    }
+    try {
+      const result = await fn()
+      this._onSuccess()
+      return result
+    } catch (err) {
+      this._onFailure(err)
+      throw err
+    }
+  }
+
+  private _onSuccess(): void {
+    this._consecutiveFailures = 0
+    this._lastSuccessAt = new Date()
+    if (this._recoveryTimer) {
+      clearTimeout(this._recoveryTimer)
+      this._recoveryTimer = undefined
+      this._recovering = false
+    }
+  }
+
+  private _onFailure(err: unknown): void {
+    this._consecutiveFailures++
+    this._lastError = err instanceof Error ? err.message : String(err)
+    this._lastFailureAt = new Date()
+    if (this.health === 'offline' && !this._recovering) {
+      this._startRecovery()
+    }
+  }
+
+  private _startRecovery(): void {
+    if (this._recovering) return
+    this._recovering = true
+    console.log(`UTA[${this.id}]: offline, starting auto-recovery...`)
+    this._scheduleRecoveryAttempt(0)
+  }
+
+  private _scheduleRecoveryAttempt(attempt: number): void {
+    const delay = Math.min(
+      UnifiedTradingAccount.RECOVERY_BASE_MS * 2 ** attempt,
+      UnifiedTradingAccount.RECOVERY_MAX_MS,
+    )
+    this._recoveryTimer = setTimeout(async () => {
+      try {
+        await this.broker.init()
+        await this.broker.getAccount()
+        this._onSuccess()
+        console.log(`UTA[${this.id}]: auto-recovery succeeded`)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`UTA[${this.id}]: recovery attempt ${attempt + 1} failed: ${msg}`)
+        this._scheduleRecoveryAttempt(attempt + 1)
+      }
+    }, delay)
   }
 
   // ==================== aliceId management ====================
@@ -252,7 +366,10 @@ export class UnifiedTradingAccount {
     return this.git.commit(message)
   }
 
-  push(): Promise<PushResult> {
+  async push(): Promise<PushResult> {
+    if (this.health === 'offline') {
+      throw new Error(`Account "${this.label}" is offline. Cannot execute trades.`)
+    }
     return this.git.push()
   }
 
@@ -286,7 +403,7 @@ export class UnifiedTradingAccount {
     const updates: OrderStatusUpdate[] = []
 
     for (const { orderId, symbol } of pendingOrders) {
-      const brokerOrder = await this.broker.getOrder(orderId)
+      const brokerOrder = await this._callBroker(() => this.broker.getOrder(orderId))
       if (!brokerOrder) continue
 
       const status = brokerOrder.orderState.status
@@ -323,39 +440,39 @@ export class UnifiedTradingAccount {
   // ==================== Broker queries (delegation) ====================
 
   getAccount(): Promise<AccountInfo> {
-    return this.broker.getAccount()
+    return this._callBroker(() => this.broker.getAccount())
   }
 
   async getPositions(): Promise<Position[]> {
-    const positions = await this.broker.getPositions()
+    const positions = await this._callBroker(() => this.broker.getPositions())
     for (const p of positions) this.stampAliceId(p.contract)
     return positions
   }
 
   async getOrders(orderIds: string[]): Promise<OpenOrder[]> {
-    const orders = await this.broker.getOrders(orderIds)
+    const orders = await this._callBroker(() => this.broker.getOrders(orderIds))
     for (const o of orders) this.stampAliceId(o.contract)
     return orders
   }
 
   async getQuote(contract: Contract): Promise<Quote> {
-    const quote = await this.broker.getQuote(contract)
+    const quote = await this._callBroker(() => this.broker.getQuote(contract))
     this.stampAliceId(quote.contract)
     return quote
   }
 
   getMarketClock(): Promise<MarketClock> {
-    return this.broker.getMarketClock()
+    return this._callBroker(() => this.broker.getMarketClock())
   }
 
   async searchContracts(pattern: string): Promise<ContractDescription[]> {
-    const results = await this.broker.searchContracts(pattern)
+    const results = await this._callBroker(() => this.broker.searchContracts(pattern))
     for (const desc of results) this.stampAliceId(desc.contract)
     return results
   }
 
   async getContractDetails(query: Contract): Promise<ContractDetails | null> {
-    const details = await this.broker.getContractDetails(query)
+    const details = await this._callBroker(() => this.broker.getContractDetails(query))
     if (details) this.stampAliceId(details.contract)
     return details
   }
@@ -376,11 +493,12 @@ export class UnifiedTradingAccount {
 
   // ==================== Lifecycle ====================
 
-  init(): Promise<void> {
-    return this.broker.init()
-  }
-
-  close(): Promise<void> {
+  async close(): Promise<void> {
+    if (this._recoveryTimer) {
+      clearTimeout(this._recoveryTimer)
+      this._recoveryTimer = undefined
+      this._recovering = false
+    }
     return this.broker.close()
   }
 }

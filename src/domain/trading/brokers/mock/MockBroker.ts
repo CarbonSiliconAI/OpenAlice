@@ -134,6 +134,7 @@ export class MockBroker implements IBroker {
   private _nextOrderId = 1
   private _accountOverride: AccountInfo | null = null
   private _callLog: CallRecord[] = []
+  private _failRemaining = 0
 
   constructor(options: MockBrokerOptions = {}) {
     this.id = options.id ?? 'mock-paper'
@@ -151,6 +152,13 @@ export class MockBroker implements IBroker {
 
   private _record(method: string, args: unknown[]): void {
     this._callLog.push({ method, args, timestamp: Date.now() })
+  }
+
+  private _checkFail(method: string): void {
+    if (this._failRemaining > 0) {
+      this._failRemaining--
+      throw new Error(`MockBroker[${this.id}]: simulated ${method} failure`)
+    }
   }
 
   /** Get all calls, optionally filtered by method name. */
@@ -176,7 +184,7 @@ export class MockBroker implements IBroker {
 
   // ---- Lifecycle ----
 
-  async init(): Promise<void> { this._record('init', []) }
+  async init(): Promise<void> { this._record('init', []); this._checkFail('init') }
   async close(): Promise<void> { this._record('close', []) }
 
   // ---- Contract search (stub) ----
@@ -293,6 +301,7 @@ export class MockBroker implements IBroker {
 
   async getAccount(): Promise<AccountInfo> {
     this._record('getAccount', [])
+    this._checkFail('getAccount')
     if (this._accountOverride) return this._accountOverride
 
     let unrealizedPnL = 0
@@ -315,6 +324,7 @@ export class MockBroker implements IBroker {
 
   async getPositions(): Promise<Position[]> {
     this._record('getPositions', [])
+    this._checkFail('getPositions')
     const result: Position[] = []
     for (const pos of this._positions.values()) {
       const price = this._quotes.get(pos.contract.symbol ?? '') ?? pos.avgCost.toNumber()
@@ -423,6 +433,11 @@ export class MockBroker implements IBroker {
         status: o.orderState.status as InternalOrder['status'],
       })
     }
+  }
+
+  /** Make the next N broker calls throw. Used to test health transitions. */
+  setFailMode(count: number): void {
+    this._failRemaining = count
   }
 
   /** Override account info directly. Bypasses computed values from positions. */
