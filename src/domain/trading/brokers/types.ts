@@ -11,6 +11,26 @@ import type { Contract, ContractDescription, ContractDetails, Order, OrderState,
 import type Decimal from 'decimal.js'
 import '../contract-ext.js'
 
+// ==================== Errors ====================
+
+export type BrokerErrorCode = 'CONFIG' | 'AUTH' | 'NETWORK' | 'EXCHANGE' | 'UNKNOWN'
+
+/**
+ * Structured broker error. `permanent` errors (CONFIG, AUTH) will not be retried
+ * by UTA's recovery loop — transient errors (NETWORK, EXCHANGE) will.
+ */
+export class BrokerError extends Error {
+  readonly code: BrokerErrorCode
+  readonly permanent: boolean
+
+  constructor(code: BrokerErrorCode, message: string) {
+    super(message)
+    this.name = 'BrokerError'
+    this.code = code
+    this.permanent = code === 'CONFIG' || code === 'AUTH'
+  }
+}
+
 // ==================== Position ====================
 
 /**
@@ -113,6 +133,7 @@ export interface BrokerHealthInfo {
   lastSuccessAt?: Date
   lastFailureAt?: Date
   recovering: boolean
+  disabled: boolean
 }
 
 // ==================== Account capabilities ====================

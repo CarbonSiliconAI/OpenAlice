@@ -11,15 +11,16 @@
 import Alpaca from '@alpacahq/alpaca-trade-api'
 import Decimal from 'decimal.js'
 import { Contract, ContractDescription, ContractDetails, Order, OrderState, UNSET_DOUBLE, UNSET_DECIMAL } from '@traderalice/ibkr'
-import type {
-  IBroker,
-  AccountCapabilities,
-  AccountInfo,
-  Position,
-  PlaceOrderResult,
-  OpenOrder,
-  Quote,
-  MarketClock,
+import {
+  BrokerError,
+  type IBroker,
+  type AccountCapabilities,
+  type AccountInfo,
+  type Position,
+  type PlaceOrderResult,
+  type OpenOrder,
+  type Quote,
+  type MarketClock,
 } from '../types.js'
 import '../../contract-ext.js'
 import type {
@@ -77,7 +78,8 @@ export class AlpacaBroker implements IBroker {
 
   async init(): Promise<void> {
     if (!this.config.apiKey || !this.config.secretKey) {
-      throw new Error(
+      throw new BrokerError(
+        'CONFIG',
         `No API credentials configured. Set apiKey and apiSecret in accounts.json to enable this account.`,
       )
     }
@@ -101,7 +103,8 @@ export class AlpacaBroker implements IBroker {
         const isAuthError = err instanceof Error &&
           /40[13]|forbidden|unauthorized/i.test(err.message)
         if (isAuthError && attempt >= AlpacaBroker.MAX_AUTH_RETRIES) {
-          throw new Error(
+          throw new BrokerError(
+            'AUTH',
             `Authentication failed — verify your Alpaca API key and secret are correct.`,
           )
         }

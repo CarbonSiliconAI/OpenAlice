@@ -10,18 +10,19 @@ import ccxt from 'ccxt'
 import Decimal from 'decimal.js'
 import type { Exchange, Order as CcxtOrder } from 'ccxt'
 import { Contract, ContractDescription, ContractDetails, Order, OrderState, UNSET_DOUBLE, UNSET_DECIMAL } from '@traderalice/ibkr'
-import type {
-  IBroker,
-  AccountCapabilities,
-  AccountInfo,
-  Position,
-  PlaceOrderResult,
-  OpenOrder,
-  Quote,
-  MarketClock,
-  FundingRate,
-  OrderBook,
-  OrderBookLevel,
+import {
+  BrokerError,
+  type IBroker,
+  type AccountCapabilities,
+  type AccountInfo,
+  type Position,
+  type PlaceOrderResult,
+  type OpenOrder,
+  type Quote,
+  type MarketClock,
+  type FundingRate,
+  type OrderBook,
+  type OrderBookLevel,
 } from '../types.js'
 import '../../contract-ext.js'
 import type { CcxtBrokerConfig, CcxtMarket } from './ccxt-types.js'
@@ -109,7 +110,8 @@ export class CcxtBroker implements IBroker<CcxtBrokerMeta> {
 
   private ensureWritable(): void {
     if (this.readOnly) {
-      throw new Error(
+      throw new BrokerError(
+        'CONFIG',
         `CcxtBroker[${this.id}] is in read-only mode (no API keys). This operation requires authentication.`,
       )
     }

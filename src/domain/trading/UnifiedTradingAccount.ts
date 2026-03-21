@@ -9,7 +9,7 @@
 
 import Decimal from 'decimal.js'
 import { Contract, Order, ContractDescription, ContractDetails } from '@traderalice/ibkr'
-import type { IBroker, AccountInfo, Position, OpenOrder, PlaceOrderResult, Quote, MarketClock, AccountCapabilities, BrokerHealth, BrokerHealthInfo } from './brokers/types.js'
+import { BrokerError, type IBroker, type AccountInfo, type Position, type OpenOrder, type PlaceOrderResult, type Quote, type MarketClock, type AccountCapabilities, type BrokerHealth, type BrokerHealthInfo } from './brokers/types.js'
 import { TradingGit } from './git/TradingGit.js'
 import type {
   Operation,
@@ -121,6 +121,7 @@ export class UnifiedTradingAccount {
   private _lastFailureAt?: Date
   private _recoveryTimer?: ReturnType<typeof setTimeout>
   private _recovering = false
+  private _disabled = false
 
   constructor(broker: IBroker, options: UnifiedTradingAccountOptions = {}) {
     this.broker = broker
@@ -186,9 +187,14 @@ export class UnifiedTradingAccount {
   // ==================== Health ====================
 
   get health(): BrokerHealth {
+    if (this._disabled) return 'offline'
     if (this._consecutiveFailures >= UnifiedTradingAccount.OFFLINE_THRESHOLD) return 'offline'
     if (this._consecutiveFailures >= UnifiedTradingAccount.DEGRADED_THRESHOLD) return 'degraded'
     return 'healthy'
+  }
+
+  get disabled(): boolean {
+    return this._disabled
   }
 
   getHealthInfo(): BrokerHealthInfo {
@@ -199,6 +205,7 @@ export class UnifiedTradingAccount {
       lastSuccessAt: this._lastSuccessAt,
       lastFailureAt: this._lastFailureAt,
       recovering: this._recovering,
+      disabled: this._disabled,
     }
   }
 
@@ -211,6 +218,12 @@ export class UnifiedTradingAccount {
       console.log(`UTA[${this.id}]: connected`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
+      if (err instanceof BrokerError && err.permanent) {
+        console.warn(`UTA[${this.id}]: disabled — ${msg}`)
+        this._disabled = true
+        this._lastError = msg
+        return
+      }
       console.warn(`UTA[${this.id}]: initial connect failed: ${msg}`)
       this._consecutiveFailures = UnifiedTradingAccount.OFFLINE_THRESHOLD
       this._lastError = msg
@@ -220,6 +233,9 @@ export class UnifiedTradingAccount {
   }
 
   private async _callBroker<T>(fn: () => Promise<T>): Promise<T> {
+    if (this._disabled) {
+      throw new BrokerError('CONFIG', `Account "${this.label}" is disabled due to configuration error: ${this._lastError}`)
+    }
     if (this.health === 'offline' && this._recovering) {
       throw new Error(`Account "${this.label}" is offline and reconnecting. Try again shortly.`)
     }
@@ -272,6 +288,12 @@ export class UnifiedTradingAccount {
         console.log(`UTA[${this.id}]: auto-recovery succeeded`)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        if (err instanceof BrokerError && err.permanent) {
+          console.warn(`UTA[${this.id}]: disabled — ${msg}`)
+          this._disabled = true
+          this._recovering = false
+          return
+        }
         console.warn(`UTA[${this.id}]: recovery attempt ${attempt + 1} failed: ${msg}`)
         this._scheduleRecoveryAttempt(attempt + 1)
       }
@@ -367,6 +389,9 @@ export class UnifiedTradingAccount {
   }
 
   async push(): Promise<PushResult> {
+    if (this._disabled) {
+      throw new BrokerError('CONFIG', `Account "${this.label}" is disabled due to configuration error.`)
+    }
     if (this.health === 'offline') {
       throw new Error(`Account "${this.label}" is offline. Cannot execute trades.`)
     }
