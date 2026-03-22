@@ -265,8 +265,15 @@ export class IbkrBroker implements IBroker {
   }
 
   async getMarketClock(): Promise<MarketClock> {
-    const serverTime = await this.bridge.requestCurrentTime()
-    const now = new Date(serverTime * 1000)
+    // TODO: per-contract trading hours via ContractDetails.tradingHours
+    // For now, use local time with NYSE schedule as a baseline.
+    let now: Date
+    try {
+      const serverTime = await this.bridge.requestCurrentTime(3000)
+      now = new Date(serverTime * 1000)
+    } catch {
+      now = new Date()
+    }
 
     // NYSE hours: Mon-Fri 9:30-16:00 ET
     const etParts = new Intl.DateTimeFormat('en-US', {
