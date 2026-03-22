@@ -52,12 +52,10 @@ describe('CcxtBroker — Bybit e2e', () => {
     console.log(`  found ${results.length} ETH contracts, perp: ${perp!.contract.localSymbol}`)
   })
 
-  it('places market buy 0.01 ETH → execution returned', async () => {
-
-
-    const matches = await broker.searchContracts('ETH')
+  it('places market buy 0.01 ETH → execution returned', async ({ skip }) => {
+    const matches = await broker!.searchContracts('ETH')
     const ethPerp = matches.find(m => m.contract.localSymbol?.includes('USDT:USDT'))
-    if (!ethPerp) { console.log('  no ETH/USDT perp, skipping'); return }
+    if (!ethPerp) skip('ETH/USDT perp not found')
 
     // Diagnostic: see raw CCXT createOrder response
     const exchange = (broker as any).exchange
@@ -97,33 +95,29 @@ describe('CcxtBroker — Bybit e2e', () => {
     console.log(`  ETH position: ${ethPos!.quantity} ${ethPos!.side}`)
   })
 
-  it('closes ETH position with reduceOnly', async () => {
-
-
-    const matches = await broker.searchContracts('ETH')
+  it('closes ETH position with reduceOnly', async ({ skip }) => {
+    const matches = await broker!.searchContracts('ETH')
     const ethPerp = matches.find(m => m.contract.localSymbol?.includes('USDT:USDT'))
-    if (!ethPerp) return
+    if (!ethPerp) skip('ETH/USDT perp not found')
 
     const result = await broker.closePosition(ethPerp.contract, new Decimal('0.01'))
     expect(result.success).toBe(true)
     console.log(`  close orderId=${result.orderId}, success=${result.success}`)
   }, 15_000)
 
-  it('queries order by ID', async () => {
-
-
+  it('queries order by ID', async ({ skip }) => {
     // Place a small order to get an orderId
-    const matches = await broker.searchContracts('ETH')
+    const matches = await broker!.searchContracts('ETH')
     const ethPerp = matches.find(m => m.contract.localSymbol?.includes('USDT:USDT'))
-    if (!ethPerp) return
+    if (!ethPerp) skip('ETH/USDT perp not found')
 
     const order = new Order()
     order.action = 'BUY'
     order.orderType = 'MKT'
     order.totalQuantity = new Decimal('0.01')
 
-    const placed = await broker.placeOrder(ethPerp.contract, order)
-    if (!placed.orderId) return
+    const placed = await broker!.placeOrder(ethPerp!.contract, order)
+    if (!placed.orderId) skip('no orderId returned')
 
     // Wait for exchange to settle — Bybit needs time before order appears in closed list
     await new Promise(r => setTimeout(r, 5000))
