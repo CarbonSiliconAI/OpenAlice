@@ -328,6 +328,40 @@ describe('UTA — stagePlaceOrder', () => {
     expect(contract.aliceId).toBe('mock-paper|AAPL')
     expect(contract.symbol).toBe('AAPL')
   })
+
+  it('sets tpsl with takeProfit only', () => {
+    uta.stagePlaceOrder({ aliceId: 'mock-paper|AAPL', action: 'BUY', orderType: 'MKT', totalQuantity: 10, takeProfit: { price: '160' } })
+    const staged = uta.status().staged
+    const op = staged[0] as Extract<Operation, { action: 'placeOrder' }>
+    expect(op.tpsl).toEqual({ takeProfit: { price: '160' }, stopLoss: undefined })
+  })
+
+  it('sets tpsl with stopLoss only', () => {
+    uta.stagePlaceOrder({ aliceId: 'mock-paper|AAPL', action: 'BUY', orderType: 'MKT', totalQuantity: 10, stopLoss: { price: '140' } })
+    const staged = uta.status().staged
+    const op = staged[0] as Extract<Operation, { action: 'placeOrder' }>
+    expect(op.tpsl).toEqual({ takeProfit: undefined, stopLoss: { price: '140' } })
+  })
+
+  it('sets tpsl with both TP and SL', () => {
+    uta.stagePlaceOrder({
+      aliceId: 'mock-paper|AAPL', action: 'BUY', orderType: 'MKT', totalQuantity: 10,
+      takeProfit: { price: '160' }, stopLoss: { price: '140', limitPrice: '139.50' },
+    })
+    const staged = uta.status().staged
+    const op = staged[0] as Extract<Operation, { action: 'placeOrder' }>
+    expect(op.tpsl).toEqual({
+      takeProfit: { price: '160' },
+      stopLoss: { price: '140', limitPrice: '139.50' },
+    })
+  })
+
+  it('omits tpsl when neither TP nor SL provided', () => {
+    uta.stagePlaceOrder({ aliceId: 'mock-paper|AAPL', action: 'BUY', orderType: 'MKT', totalQuantity: 10 })
+    const staged = uta.status().staged
+    const op = staged[0] as Extract<Operation, { action: 'placeOrder' }>
+    expect(op.tpsl).toBeUndefined()
+  })
 })
 
 // ==================== stageModifyOrder ====================

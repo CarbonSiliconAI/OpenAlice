@@ -7,7 +7,7 @@
 
 import type { Contract, Order, OrderCancel, Execution, OrderState } from '@traderalice/ibkr'
 import type Decimal from 'decimal.js'
-import type { Position, OpenOrder } from '../brokers/types.js'
+import type { Position, OpenOrder, TpSlParams } from '../brokers/types.js'
 import '../contract-ext.js'
 
 // ==================== Commit Hash ====================
@@ -20,7 +20,7 @@ export type CommitHash = string
 export type OperationAction = Operation['action']
 
 export type Operation =
-  | { action: 'placeOrder'; contract: Contract; order: Order }
+  | { action: 'placeOrder'; contract: Contract; order: Order; tpsl?: TpSlParams }
   | { action: 'modifyOrder'; orderId: string; changes: Partial<Order> }
   | { action: 'closePosition'; contract: Contract; quantity?: Decimal }
   | { action: 'cancelOrder'; orderId: string; orderCancel?: OrderCancel }

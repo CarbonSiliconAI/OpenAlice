@@ -9,7 +9,7 @@
 
 import Decimal from 'decimal.js'
 import { Contract, Order, ContractDescription, ContractDetails, UNSET_DECIMAL } from '@traderalice/ibkr'
-import { BrokerError, type IBroker, type AccountInfo, type Position, type OpenOrder, type PlaceOrderResult, type Quote, type MarketClock, type AccountCapabilities, type BrokerHealth, type BrokerHealthInfo } from './brokers/types.js'
+import { BrokerError, type IBroker, type AccountInfo, type Position, type OpenOrder, type PlaceOrderResult, type Quote, type MarketClock, type AccountCapabilities, type BrokerHealth, type BrokerHealthInfo, type TpSlParams } from './brokers/types.js'
 import { TradingGit } from './git/TradingGit.js'
 import type {
   Operation,
@@ -59,6 +59,8 @@ export interface StagePlaceOrderParams {
   outsideRth?: boolean
   parentId?: string
   ocaGroup?: string
+  takeProfit?: { price: string }
+  stopLoss?: { price: string; limitPrice?: string }
 }
 
 export interface StageModifyOrderParams {
@@ -141,7 +143,7 @@ export class UnifiedTradingAccount {
     const dispatcher = async (op: Operation): Promise<unknown> => {
       switch (op.action) {
         case 'placeOrder':
-          return broker.placeOrder(op.contract, op.order)
+          return broker.placeOrder(op.contract, op.order, op.tpsl)
         case 'modifyOrder':
           return broker.modifyOrder(op.orderId, op.changes)
         case 'closePosition':
@@ -360,7 +362,12 @@ export class UnifiedTradingAccount {
     if (params.parentId != null) order.parentId = parseInt(params.parentId, 10) || 0
     if (params.ocaGroup != null) order.ocaGroup = params.ocaGroup
 
-    return this.git.add({ action: 'placeOrder', contract, order })
+    const tpsl: TpSlParams | undefined =
+      (params.takeProfit || params.stopLoss)
+        ? { takeProfit: params.takeProfit, stopLoss: params.stopLoss }
+        : undefined
+
+    return this.git.add({ action: 'placeOrder', contract, order, tpsl })
   }
 
   stageModifyOrder(params: StageModifyOrderParams): AddResult {

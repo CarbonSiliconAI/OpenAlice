@@ -9,7 +9,7 @@
  * placeOrder returns submitted — fill confirmed via getOrder/sync.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { UnifiedTradingAccount } from '../../UnifiedTradingAccount.js'
 import { MockBroker } from '../../brokers/mock/index.js'
 import '../../contract-ext.js'
@@ -162,6 +162,43 @@ describe('UTA — full trading lifecycle', () => {
     expect(history).toHaveLength(2)
     expect(history[0].message).toBe('close AAPL')
     expect(history[1].message).toBe('buy AAPL')
+  })
+})
+
+// ==================== TPSL end-to-end ====================
+
+describe('UTA — TPSL end-to-end', () => {
+  it('tpsl params flow through to broker.placeOrder', async () => {
+    const spy = vi.spyOn(broker, 'placeOrder')
+
+    uta.stagePlaceOrder({
+      aliceId: 'mock-paper|AAPL', symbol: 'AAPL', action: 'BUY', orderType: 'MKT', totalQuantity: 10,
+      takeProfit: { price: '160' },
+      stopLoss: { price: '140', limitPrice: '139.50' },
+    })
+    uta.commit('buy AAPL with TPSL')
+    const result = await uta.push()
+
+    expect(result.submitted).toHaveLength(1)
+    expect(spy).toHaveBeenCalledTimes(1)
+
+    // Verify tpsl reached the broker (3rd argument)
+    const tpslArg = spy.mock.calls[0][2]
+    expect(tpslArg).toEqual({
+      takeProfit: { price: '160' },
+      stopLoss: { price: '140', limitPrice: '139.50' },
+    })
+  })
+
+  it('order without tpsl passes undefined to broker', async () => {
+    const spy = vi.spyOn(broker, 'placeOrder')
+
+    uta.stagePlaceOrder({ aliceId: 'mock-paper|AAPL', symbol: 'AAPL', action: 'BUY', orderType: 'MKT', totalQuantity: 10 })
+    uta.commit('buy AAPL no TPSL')
+    await uta.push()
+
+    const tpslArg = spy.mock.calls[0][2]
+    expect(tpslArg).toBeUndefined()
   })
 })
 

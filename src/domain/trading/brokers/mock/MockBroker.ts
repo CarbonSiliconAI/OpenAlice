@@ -20,6 +20,7 @@ import type {
   OpenOrder,
   Quote,
   MarketClock,
+  TpSlParams,
 } from '../types.js'
 import '../../contract-ext.js'
 
@@ -217,8 +218,8 @@ export class MockBroker implements IBroker {
 
   // ---- Trading operations ----
 
-  async placeOrder(contract: Contract, order: Order, _extraParams?: Record<string, unknown>): Promise<PlaceOrderResult> {
-    this._record('placeOrder', [contract, order, _extraParams])
+  async placeOrder(contract: Contract, order: Order, tpsl?: TpSlParams): Promise<PlaceOrderResult> {
+    this._record('placeOrder', [contract, order, tpsl])
     const orderId = `mock-ord-${this._nextOrderId++}`
     const isMarket = order.orderType === 'MKT'
     const side = order.action.toUpperCase()

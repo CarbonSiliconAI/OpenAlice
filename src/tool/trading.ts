@@ -273,7 +273,8 @@ Required params by orderType:
   STP LMT: totalQuantity + auxPrice (stop trigger) + lmtPrice
   TRAIL: totalQuantity + auxPrice (trailing offset) or trailingPercent
   TRAIL LIMIT: totalQuantity + auxPrice (trailing offset) + lmtPrice
-  MOC: totalQuantity`,
+  MOC: totalQuantity
+Optional: attach takeProfit and/or stopLoss for automatic exit orders.`,
       inputSchema: z.object({
         source: z.string().describe(sourceDesc(true)),
         aliceId: z.string().describe('Contract ID (format: accountId|nativeKey, from searchContracts)'),
@@ -291,6 +292,13 @@ Required params by orderType:
         outsideRth: z.boolean().optional().describe('Allow execution outside regular trading hours'),
         parentId: z.string().optional().describe('Parent order ID (bracket orders)'),
         ocaGroup: z.string().optional().describe('One-Cancels-All group name'),
+        takeProfit: z.object({
+          price: z.string().describe('Take profit price'),
+        }).optional().describe('Take profit order (single-level, full quantity)'),
+        stopLoss: z.object({
+          price: z.string().describe('Stop loss trigger price'),
+          limitPrice: z.string().optional().describe('Limit price for stop-limit SL (omit for stop-market)'),
+        }).optional().describe('Stop loss order (single-level, full quantity)'),
       }),
       execute: ({ source, ...params }) => manager.resolveOne(source).stagePlaceOrder(params),
     }),

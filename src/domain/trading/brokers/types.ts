@@ -168,6 +168,13 @@ export interface BrokerConfigField {
   sensitive?: boolean
 }
 
+// ==================== Take Profit / Stop Loss ====================
+
+export interface TpSlParams {
+  takeProfit?: { price: string }
+  stopLoss?: { price: string; limitPrice?: string }
+}
+
 // ==================== IBroker ====================
 
 export interface IBroker<TMeta = unknown> {
@@ -192,7 +199,7 @@ export interface IBroker<TMeta = unknown> {
 
   // ---- Trading operations (IBKR Order as source of truth) ----
 
-  placeOrder(contract: Contract, order: Order): Promise<PlaceOrderResult>
+  placeOrder(contract: Contract, order: Order, tpsl?: TpSlParams): Promise<PlaceOrderResult>
   modifyOrder(orderId: string, changes: Partial<Order>): Promise<PlaceOrderResult>
   cancelOrder(orderId: string, orderCancel?: OrderCancel): Promise<PlaceOrderResult>
   closePosition(contract: Contract, quantity?: Decimal): Promise<PlaceOrderResult>

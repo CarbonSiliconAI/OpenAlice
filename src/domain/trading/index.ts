@@ -24,6 +24,7 @@ export type {
   Quote,
   MarketClock,
   AccountCapabilities,
+  TpSlParams,
 } from './brokers/index.js'
 export {
   createBroker,
