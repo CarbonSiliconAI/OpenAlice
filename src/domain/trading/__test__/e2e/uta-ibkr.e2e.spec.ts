@@ -47,11 +47,11 @@ describe('UTA — IBKR order lifecycle', () => {
     const addResult = uta!.stagePlaceOrder({
       aliceId,
       symbol: 'AAPL',
-      side: 'buy',
-      type: 'limit',
-      price: 1.00,
-      qty: 1,
-      timeInForce: 'gtc',
+      action: 'BUY',
+      orderType: 'LMT',
+      lmtPrice: 1.00,
+      totalQuantity: 1,
+      tif: 'GTC',
     })
     expect(addResult.staged).toBe(true)
 
@@ -79,6 +79,37 @@ describe('UTA — IBKR order lifecycle', () => {
   }, 30_000)
 })
 
+// ==================== TPSL param pass-through (any time) ====================
+
+describe('UTA — IBKR TPSL pass-through', () => {
+  beforeEach(({ skip }) => { if (!uta) skip('no IBKR paper account') })
+
+  it('tpsl param does not break order placement', async () => {
+    const results = await broker!.searchContracts('AAPL')
+    const nativeKey = broker!.getNativeKey(results[0].contract)
+    const aliceId = `${uta!.id}|${nativeKey}`
+
+    // Stage limit order with TPSL — IBKR ignores tpsl but it should not error
+    uta!.stagePlaceOrder({
+      aliceId, symbol: 'AAPL', action: 'BUY', orderType: 'LMT',
+      lmtPrice: 1.00, totalQuantity: 1, tif: 'GTC',
+      takeProfit: { price: '300' },
+      stopLoss: { price: '100' },
+    })
+    uta!.commit('e2e: IBKR limit with TPSL (ignored)')
+    const pushResult = await uta!.push()
+    console.log(`  pushed with TPSL: submitted=${pushResult.submitted.length}, status=${pushResult.submitted[0]?.status}`)
+    expect(pushResult.submitted).toHaveLength(1)
+    expect(pushResult.rejected).toHaveLength(0)
+
+    // Clean up
+    const orderId = pushResult.submitted[0].orderId!
+    uta!.stageCancelOrder({ orderId })
+    uta!.commit('e2e: cancel TPSL order')
+    await uta!.push()
+  }, 30_000)
+})
+
 // ==================== Full fill flow (market hours only) ====================
 
 describe('UTA — IBKR fill flow (AAPL)', () => {
@@ -102,9 +133,9 @@ describe('UTA — IBKR fill flow (AAPL)', () => {
     const addResult = uta!.stagePlaceOrder({
       aliceId,
       symbol: 'AAPL',
-      side: 'buy',
-      type: 'market',
-      qty: 1,
+      action: 'BUY',
+      orderType: 'MKT',
+      totalQuantity: 1,
     })
     expect(addResult.staged).toBe(true)
 

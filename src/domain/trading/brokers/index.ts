@@ -9,6 +9,7 @@ export type {
   MarketClock,
   AccountCapabilities,
   BrokerConfigField,
+  TpSlParams,
 } from './types.js'
 
 // Factory + Registry

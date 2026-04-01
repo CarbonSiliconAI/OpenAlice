@@ -46,6 +46,8 @@ export interface AlpacaOrderRaw {
   filled_at: string | null
   created_at: string
   reject_reason: string | null
+  order_class?: string
+  legs?: AlpacaOrderRaw[]
 }
 
 export interface AlpacaSnapshotRaw {

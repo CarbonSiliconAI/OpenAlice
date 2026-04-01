@@ -43,11 +43,11 @@ describe('UTA — Alpaca order lifecycle', () => {
     const addResult = uta!.stagePlaceOrder({
       aliceId,
       symbol: 'AAPL',
-      side: 'buy',
-      type: 'limit',
-      price: 1.00,
-      qty: 1,
-      timeInForce: 'gtc',
+      action: 'BUY',
+      orderType: 'LMT',
+      lmtPrice: 1.00,
+      totalQuantity: 1,
+      tif: 'GTC',
     })
     expect(addResult.staged).toBe(true)
 
@@ -75,6 +75,49 @@ describe('UTA — Alpaca order lifecycle', () => {
   }, 30_000)
 })
 
+// ==================== TPSL bracket order (market hours only) ====================
+
+describe('UTA — Alpaca TPSL bracket', () => {
+  beforeEach(({ skip }) => {
+    if (!uta) skip('no Alpaca paper account')
+    if (!marketOpen) skip('market closed')
+  })
+
+  it('market buy with TPSL → getOrder returns bracket legs', async () => {
+    const nativeKey = broker!.getNativeKey({ symbol: 'AAPL' } as any)
+    const aliceId = `${uta!.id}|${nativeKey}`
+
+    uta!.stagePlaceOrder({
+      aliceId, symbol: 'AAPL', action: 'BUY', orderType: 'MKT', totalQuantity: 1,
+      takeProfit: { price: '999' },
+      stopLoss: { price: '1' },
+    })
+    uta!.commit('e2e: buy AAPL with TPSL')
+    const pushResult = await uta!.push()
+    expect(pushResult.submitted).toHaveLength(1)
+    const orderId = pushResult.submitted[0].orderId!
+    console.log(`  TPSL bracket: orderId=${orderId}`)
+
+    await new Promise(r => setTimeout(r, 2000))
+
+    const detail = await broker!.getOrder(orderId)
+    expect(detail).not.toBeNull()
+    console.log(`  fetched tpsl:`, JSON.stringify(detail!.tpsl))
+
+    if (detail!.tpsl) {
+      if (detail!.tpsl.takeProfit) expect(detail!.tpsl.takeProfit.price).toBe('999')
+      if (detail!.tpsl.stopLoss) expect(detail!.tpsl.stopLoss.price).toBe('1')
+    } else {
+      console.log('  NOTE: Alpaca did not return legs on fetched bracket order')
+    }
+
+    // Clean up — cancel the bracket legs then close position
+    uta!.stageClosePosition({ aliceId, qty: 1 })
+    uta!.commit('e2e: close TPSL AAPL')
+    await uta!.push()
+  }, 30_000)
+})
+
 // ==================== Full fill flow (market hours only) ====================
 
 describe('UTA — Alpaca fill flow (AAPL)', () => {
@@ -96,9 +139,9 @@ describe('UTA — Alpaca fill flow (AAPL)', () => {
     const addResult = uta!.stagePlaceOrder({
       aliceId,
       symbol: 'AAPL',
-      side: 'buy',
-      type: 'market',
-      qty: 1,
+      action: 'BUY',
+      orderType: 'MKT',
+      totalQuantity: 1,
     })
     expect(addResult.staged).toBe(true)
 

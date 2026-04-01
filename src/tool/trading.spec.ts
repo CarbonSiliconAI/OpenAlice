@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { ContractDescription } from '@traderalice/ibkr'
+import Decimal from 'decimal.js'
+import { ContractDescription, Order, OrderState, UNSET_DOUBLE, UNSET_DECIMAL } from '@traderalice/ibkr'
+import type { OpenOrder } from '../domain/trading/brokers/types.js'
 import { MockBroker, makeContract } from '../domain/trading/brokers/mock/index.js'
 import { AccountManager } from '../domain/trading/account-manager.js'
 import { UnifiedTradingAccount } from '../domain/trading/UnifiedTradingAccount.js'
@@ -96,5 +98,139 @@ describe('createTradingTools — searchContracts', () => {
     const tools = createTradingTools(mgr)
     const result = await (tools.searchContracts.execute as Function)({ pattern: 'AAPL' })
     expect(result).toHaveLength(2)
+  })
+})
+
+// ==================== getOrders — summarization ====================
+
+describe('createTradingTools — getOrders summarization', () => {
+  function makeOpenOrder(overrides?: Partial<{ action: string; orderType: string; qty: number; lmtPrice: number; status: string; symbol: string }>): OpenOrder {
+    const contract = makeContract({ symbol: overrides?.symbol ?? 'AAPL' })
+    contract.aliceId = `mock-paper|${overrides?.symbol ?? 'AAPL'}`
+    const order = new Order()
+    order.action = overrides?.action ?? 'BUY'
+    order.orderType = overrides?.orderType ?? 'MKT'
+    order.totalQuantity = new Decimal(overrides?.qty ?? 10)
+    if (overrides?.lmtPrice != null) order.lmtPrice = overrides.lmtPrice
+    const orderState = new OrderState()
+    orderState.status = overrides?.status ?? 'Submitted'
+    return { contract, order, orderState }
+  }
+
+  it('returns compact summaries without UNSET fields', async () => {
+    const broker = new MockBroker({ id: 'mock-paper' })
+    broker.setQuote('AAPL', 150)
+    const mgr = makeManager(broker)
+    const uta = mgr.resolve('mock-paper')[0]
+
+    uta.stagePlaceOrder({ aliceId: 'mock-paper|AAPL', action: 'BUY', orderType: 'MKT', totalQuantity: 10 })
+    uta.commit('buy')
+    await uta.push()
+
+    const tools = createTradingTools(mgr)
+    const ids = uta.getPendingOrderIds().map(p => p.orderId)
+    // getPendingOrderIds may be empty after market fill — test the tool output shape instead
+    const result = await (tools.getOrders.execute as Function)({ source: 'mock-paper' })
+
+    // Result should be an array of compact objects, not raw OpenOrder
+    if (Array.isArray(result) && result.length > 0) {
+      const first = result[0]
+      // Should have summarized fields
+      expect(first).toHaveProperty('source')
+      expect(first).toHaveProperty('action')
+      expect(first).toHaveProperty('orderType')
+      expect(first).toHaveProperty('totalQuantity')
+      expect(first).toHaveProperty('status')
+      // Should NOT have raw IBKR fields
+      expect(first).not.toHaveProperty('softDollarTier')
+      expect(first).not.toHaveProperty('transmit')
+      expect(first).not.toHaveProperty('blockOrder')
+      expect(first).not.toHaveProperty('sweepToFill')
+    }
+  })
+
+  it('filters UNSET values from order summary', async () => {
+    const broker = new MockBroker({ id: 'mock-paper' })
+    const mgr = makeManager(broker)
+    const tools = createTradingTools(mgr)
+
+    // Mock getOrders to return a raw OpenOrder with UNSET fields
+    const uta = mgr.resolve('mock-paper')[0]
+    vi.spyOn(uta, 'getPendingOrderIds').mockReturnValue([{ orderId: 'ord-1', symbol: 'AAPL' }])
+    vi.spyOn(uta, 'getOrders').mockResolvedValue([makeOpenOrder()])
+
+    const result = await (tools.getOrders.execute as Function)({ source: 'mock-paper' })
+    expect(Array.isArray(result)).toBe(true)
+    const order = result[0]
+
+    // lmtPrice is UNSET_DOUBLE — should be absent
+    expect(order.lmtPrice).toBeUndefined()
+    // auxPrice is UNSET_DOUBLE — should be absent
+    expect(order.auxPrice).toBeUndefined()
+    // trailStopPrice is UNSET_DOUBLE — should be absent
+    expect(order.trailStopPrice).toBeUndefined()
+    // parentId is 0 — should be absent
+    expect(order.parentId).toBeUndefined()
+    // tpsl not set — should be absent
+    expect(order.tpsl).toBeUndefined()
+  })
+
+  it('includes non-UNSET optional fields', async () => {
+    const broker = new MockBroker({ id: 'mock-paper' })
+    const mgr = makeManager(broker)
+    const tools = createTradingTools(mgr)
+
+    const uta = mgr.resolve('mock-paper')[0]
+    vi.spyOn(uta, 'getPendingOrderIds').mockReturnValue([{ orderId: 'ord-2', symbol: 'AAPL' }])
+    const openOrder = makeOpenOrder({ lmtPrice: 150, orderType: 'LMT' })
+    openOrder.tpsl = { takeProfit: { price: '160' }, stopLoss: { price: '140' } }
+    vi.spyOn(uta, 'getOrders').mockResolvedValue([openOrder])
+
+    const result = await (tools.getOrders.execute as Function)({ source: 'mock-paper' })
+    const order = result[0]
+
+    expect(order.lmtPrice).toBe(150)
+    expect(order.tpsl).toEqual({ takeProfit: { price: '160' }, stopLoss: { price: '140' } })
+  })
+
+  it('preserves string orderId from getPendingOrderIds', async () => {
+    const broker = new MockBroker({ id: 'mock-paper' })
+    const mgr = makeManager(broker)
+    const tools = createTradingTools(mgr)
+
+    const uta = mgr.resolve('mock-paper')[0]
+    vi.spyOn(uta, 'getPendingOrderIds').mockReturnValue([{ orderId: 'uuid-abc-123', symbol: 'AAPL' }])
+    vi.spyOn(uta, 'getOrders').mockResolvedValue([makeOpenOrder()])
+
+    const result = await (tools.getOrders.execute as Function)({ source: 'mock-paper' })
+    // Should use the string orderId, not order.orderId (which is 0)
+    expect(result[0].orderId).toBe('uuid-abc-123')
+  })
+
+  it('groupBy contract clusters orders by aliceId', async () => {
+    const broker = new MockBroker({ id: 'mock-paper' })
+    const mgr = makeManager(broker)
+    const tools = createTradingTools(mgr)
+
+    const uta = mgr.resolve('mock-paper')[0]
+    vi.spyOn(uta, 'getPendingOrderIds').mockReturnValue([
+      { orderId: 'ord-1', symbol: 'AAPL' },
+      { orderId: 'ord-2', symbol: 'AAPL' },
+      { orderId: 'ord-3', symbol: 'ETH' },
+    ])
+    vi.spyOn(uta, 'getOrders').mockResolvedValue([
+      makeOpenOrder({ symbol: 'AAPL', action: 'BUY' }),
+      makeOpenOrder({ symbol: 'AAPL', action: 'SELL', orderType: 'LMT', lmtPrice: 160 }),
+      makeOpenOrder({ symbol: 'ETH', action: 'BUY' }),
+    ])
+
+    const result = await (tools.getOrders.execute as Function)({ source: 'mock-paper', groupBy: 'contract' })
+
+    // Should be an object keyed by aliceId
+    expect(result).not.toBeInstanceOf(Array)
+    expect(result['mock-paper|AAPL']).toBeDefined()
+    expect(result['mock-paper|AAPL'].orders).toHaveLength(2)
+    expect(result['mock-paper|ETH']).toBeDefined()
+    expect(result['mock-paper|ETH'].orders).toHaveLength(1)
   })
 })

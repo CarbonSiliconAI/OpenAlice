@@ -23,6 +23,7 @@ import {
   type Quote,
   type MarketClock,
   type BrokerConfigField,
+  type TpSlParams,
 } from '../types.js'
 import '../../contract-ext.js'
 import type {
@@ -177,7 +178,7 @@ export class AlpacaBroker implements IBroker {
 
   // ---- Trading operations ----
 
-  async placeOrder(contract: Contract, order: Order): Promise<PlaceOrderResult> {
+  async placeOrder(contract: Contract, order: Order, tpsl?: TpSlParams): Promise<PlaceOrderResult> {
     const symbol = resolveSymbol(contract)
     if (!symbol) {
       return { success: false, error: 'Cannot resolve contract to Alpaca symbol' }
@@ -210,6 +211,20 @@ export class AlpacaBroker implements IBroker {
       }
       if (order.trailingPercent !== UNSET_DOUBLE) alpacaOrder.trail_percent = order.trailingPercent
       if (order.outsideRth) alpacaOrder.extended_hours = true
+
+      // Bracket order (TPSL)
+      if (tpsl?.takeProfit || tpsl?.stopLoss) {
+        alpacaOrder.order_class = 'bracket'
+        if (tpsl.takeProfit) {
+          alpacaOrder.take_profit = { limit_price: parseFloat(tpsl.takeProfit.price) }
+        }
+        if (tpsl.stopLoss) {
+          alpacaOrder.stop_loss = {
+            stop_price: parseFloat(tpsl.stopLoss.price),
+            ...(tpsl.stopLoss.limitPrice && { limit_price: parseFloat(tpsl.stopLoss.limitPrice) }),
+          }
+        }
+      }
 
       const result = await this.client.createOrder(alpacaOrder) as AlpacaOrderRaw
       return {
@@ -423,10 +438,30 @@ export class AlpacaBroker implements IBroker {
     // The real string ID is preserved through PlaceOrderResult.orderId and getOrder(string).
     order.orderId = 0
 
+    const tpsl = this.extractTpSl(o)
     return {
       contract,
       order,
       orderState: makeOrderState(o.status, o.reject_reason ?? undefined),
+      ...(tpsl && { tpsl }),
     }
+  }
+
+  private extractTpSl(o: AlpacaOrderRaw): TpSlParams | undefined {
+    if (o.order_class !== 'bracket' || !o.legs?.length) return undefined
+    let takeProfit: TpSlParams['takeProfit']
+    let stopLoss: TpSlParams['stopLoss']
+    for (const leg of o.legs) {
+      if (leg.limit_price && !leg.stop_price) {
+        takeProfit = { price: leg.limit_price }
+      } else if (leg.stop_price) {
+        stopLoss = {
+          price: leg.stop_price,
+          ...(leg.limit_price && { limitPrice: leg.limit_price }),
+        }
+      }
+    }
+    if (!takeProfit && !stopLoss) return undefined
+    return { takeProfit, stopLoss }
   }
 }

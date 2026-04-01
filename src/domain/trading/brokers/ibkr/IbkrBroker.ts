@@ -33,6 +33,7 @@ import {
   type Quote,
   type MarketClock,
   type BrokerConfigField,
+  type TpSlParams,
 } from '../types.js'
 import '../../contract-ext.js'
 import { RequestBridge } from './request-bridge.js'
@@ -148,7 +149,7 @@ export class IbkrBroker implements IBroker {
 
   // ==================== Trading operations ====================
 
-  async placeOrder(contract: Contract, order: Order): Promise<PlaceOrderResult> {
+  async placeOrder(contract: Contract, order: Order, _tpsl?: TpSlParams): Promise<PlaceOrderResult> {
     // TWS requires exchange and currency on the contract. Upstream layers
     // (staging, AI tools) typically only populate symbol + secType.
     // Default to SMART routing. Currency defaults to USD — non-USD markets
@@ -188,6 +189,7 @@ export class IbkrBroker implements IBroker {
       if (changes.tif) mergedOrder.tif = changes.tif
       if (changes.orderType) mergedOrder.orderType = changes.orderType
       if (changes.trailingPercent != null) mergedOrder.trailingPercent = changes.trailingPercent
+      if (changes.trailStopPrice != null) mergedOrder.trailStopPrice = changes.trailStopPrice
 
       const numericId = parseInt(orderId, 10)
       const promise = this.bridge.requestOrder(numericId)

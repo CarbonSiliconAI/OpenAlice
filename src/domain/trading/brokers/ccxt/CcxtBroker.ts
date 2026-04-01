@@ -22,6 +22,7 @@ import {
   type Quote,
   type MarketClock,
   type BrokerConfigField,
+  type TpSlParams,
 } from '../types.js'
 import '../../contract-ext.js'
 import type { CcxtBrokerConfig, CcxtMarket, FundingRate, OrderBook, OrderBookLevel } from './ccxt-types.js'
@@ -283,7 +284,7 @@ export class CcxtBroker implements IBroker<CcxtBrokerMeta> {
 
   // ---- Trading operations ----
 
-  async placeOrder(contract: Contract, order: Order, extraParams?: Record<string, unknown>): Promise<PlaceOrderResult> {
+  async placeOrder(contract: Contract, order: Order, tpsl?: TpSlParams, extraParams?: Record<string, unknown>): Promise<PlaceOrderResult> {
     this.ensureInit()
 
 
@@ -313,6 +314,16 @@ export class CcxtBroker implements IBroker<CcxtBrokerMeta> {
 
     try {
       const params: Record<string, unknown> = { ...extraParams }
+
+      if (tpsl?.takeProfit) {
+        params.takeProfit = { triggerPrice: parseFloat(tpsl.takeProfit.price) }
+      }
+      if (tpsl?.stopLoss) {
+        params.stopLoss = {
+          triggerPrice: parseFloat(tpsl.stopLoss.price),
+          ...(tpsl.stopLoss.limitPrice && { price: parseFloat(tpsl.stopLoss.limitPrice) }),
+        }
+      }
 
       const ccxtOrderType = ibkrOrderTypeToCcxt(order.orderType)
       const side = order.action.toLowerCase() as 'buy' | 'sell'
@@ -412,7 +423,7 @@ export class CcxtBroker implements IBroker<CcxtBrokerMeta> {
     order.orderType = 'MKT'
     order.totalQuantity = quantity ?? pos.quantity
 
-    return this.placeOrder(pos.contract, order, { reduceOnly: true })
+    return this.placeOrder(pos.contract, order, undefined, { reduceOnly: true })
   }
 
   // ---- Queries ----
@@ -551,10 +562,20 @@ export class CcxtBroker implements IBroker<CcxtBrokerMeta> {
     if (o.price != null) order.lmtPrice = o.price
     order.orderId = parseInt(o.id, 10) || 0
 
+    const tp = o.takeProfitPrice
+    const sl = o.stopLossPrice
+    const tpsl: TpSlParams | undefined = (tp != null || sl != null)
+      ? {
+        ...(tp != null && { takeProfit: { price: String(tp) } }),
+        ...(sl != null && { stopLoss: { price: String(sl) } }),
+      }
+      : undefined
+
     return {
       contract,
       order,
       orderState: makeOrderState(o.status),
+      ...(tpsl && { tpsl }),
     }
   }
 

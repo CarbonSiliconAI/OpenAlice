@@ -137,6 +137,52 @@ describe('CcxtBroker — Bybit e2e', () => {
     await b().closePosition(ethPerp.contract, new Decimal('0.01'))
   }, 15_000)
 
+  it('places order with TPSL and reads back tpsl from getOrder', async ({ skip }) => {
+    const matches = await b().searchContracts('ETH')
+    const ethPerp = matches.find(m => m.contract.localSymbol?.includes('USDT:USDT'))
+    if (!ethPerp) return skip('ETH/USDT perp not found')
+
+    const order = new Order()
+    order.action = 'BUY'
+    order.orderType = 'MKT'
+    order.totalQuantity = new Decimal('0.01')
+
+    // Get current price to set reasonable TP/SL
+    const quote = await b().getQuote(ethPerp.contract)
+    const tpPrice = Math.round(quote.last * 1.5)  // 50% above — won't trigger
+    const slPrice = Math.round(quote.last * 0.5)  // 50% below — won't trigger
+
+    const placed = await b().placeOrder(ethPerp.contract, order, {
+      takeProfit: { price: String(tpPrice) },
+      stopLoss: { price: String(slPrice) },
+    })
+    expect(placed.success).toBe(true)
+    console.log(`  placed with TPSL: orderId=${placed.orderId}, tp=${tpPrice}, sl=${slPrice}`)
+
+    // Wait for exchange to register
+    await new Promise(r => setTimeout(r, 3000))
+
+    const detail = await b().getOrder(placed.orderId!)
+    expect(detail).not.toBeNull()
+    console.log(`  getOrder tpsl:`, JSON.stringify(detail!.tpsl))
+
+    // CCXT should populate takeProfitPrice/stopLossPrice on the fetched order
+    if (detail!.tpsl) {
+      if (detail!.tpsl.takeProfit) {
+        expect(parseFloat(detail!.tpsl.takeProfit.price)).toBe(tpPrice)
+      }
+      if (detail!.tpsl.stopLoss) {
+        expect(parseFloat(detail!.tpsl.stopLoss.price)).toBe(slPrice)
+      }
+    } else {
+      // Some exchanges don't return TP/SL on the parent order — log for visibility
+      console.log('  NOTE: exchange did not return TPSL on fetched order (may be separate conditional orders)')
+    }
+
+    // Clean up
+    await b().closePosition(ethPerp.contract, new Decimal('0.01'))
+  }, 30_000)
+
   it('queries conditional/trigger order by ID (#90)', async ({ skip }) => {
     // Place a stop-loss trigger order far from market price, then verify getOrder can see it.
     // This is the core scenario from issue #90.

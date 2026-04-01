@@ -514,6 +514,71 @@ describe('AlpacaBroker — getOrder()', () => {
     // IBKR orderId is number — UUID can't fit, so it should be 0
     expect(result!.order.orderId).toBe(0)
   })
+
+  it('extracts tpsl from bracket order legs', async () => {
+    const acc = new AlpacaBroker({ apiKey: 'k', secretKey: 's', paper: true })
+    ;(acc as any).client = {
+      getOrder: vi.fn().mockResolvedValue({
+        id: 'ord-bracket', symbol: 'AAPL', side: 'buy', qty: '10', notional: null,
+        type: 'market', limit_price: null, stop_price: null,
+        time_in_force: 'day', extended_hours: false,
+        status: 'filled', reject_reason: null,
+        order_class: 'bracket',
+        legs: [
+          { id: 'tp-1', symbol: 'AAPL', side: 'sell', qty: '10', notional: null,
+            type: 'limit', limit_price: '160.00', stop_price: null,
+            time_in_force: 'gtc', extended_hours: false, status: 'new', reject_reason: null },
+          { id: 'sl-1', symbol: 'AAPL', side: 'sell', qty: '10', notional: null,
+            type: 'stop', limit_price: null, stop_price: '140.00',
+            time_in_force: 'gtc', extended_hours: false, status: 'new', reject_reason: null },
+        ],
+      }),
+    }
+
+    const result = await acc.getOrder('ord-bracket')
+    expect(result!.tpsl).toEqual({
+      takeProfit: { price: '160.00' },
+      stopLoss: { price: '140.00' },
+    })
+  })
+
+  it('extracts stop-limit SL with limitPrice', async () => {
+    const acc = new AlpacaBroker({ apiKey: 'k', secretKey: 's', paper: true })
+    ;(acc as any).client = {
+      getOrder: vi.fn().mockResolvedValue({
+        id: 'ord-stp-lmt', symbol: 'AAPL', side: 'buy', qty: '10', notional: null,
+        type: 'market', limit_price: null, stop_price: null,
+        time_in_force: 'day', extended_hours: false,
+        status: 'filled', reject_reason: null,
+        order_class: 'bracket',
+        legs: [
+          { id: 'sl-2', symbol: 'AAPL', side: 'sell', qty: '10', notional: null,
+            type: 'stop_limit', limit_price: '139.50', stop_price: '140.00',
+            time_in_force: 'gtc', extended_hours: false, status: 'new', reject_reason: null },
+        ],
+      }),
+    }
+
+    const result = await acc.getOrder('ord-stp-lmt')
+    expect(result!.tpsl).toEqual({
+      stopLoss: { price: '140.00', limitPrice: '139.50' },
+    })
+  })
+
+  it('returns no tpsl for simple (non-bracket) orders', async () => {
+    const acc = new AlpacaBroker({ apiKey: 'k', secretKey: 's', paper: true })
+    ;(acc as any).client = {
+      getOrder: vi.fn().mockResolvedValue({
+        id: 'ord-simple', symbol: 'AAPL', side: 'buy', qty: '10', notional: null,
+        type: 'market', limit_price: null, stop_price: null,
+        time_in_force: 'day', extended_hours: false,
+        status: 'filled', reject_reason: null,
+      }),
+    }
+
+    const result = await acc.getOrder('ord-simple')
+    expect(result!.tpsl).toBeUndefined()
+  })
 })
 
 // ==================== getQuote ====================

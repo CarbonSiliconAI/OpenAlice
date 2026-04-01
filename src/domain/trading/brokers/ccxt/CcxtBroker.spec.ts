@@ -352,6 +352,57 @@ describe('CcxtBroker — getOrder (bybit)', () => {
     const result = await acc.getOrder('ord-404')
     expect(result).toBeNull()
   })
+
+  it('extracts tpsl from CCXT order with takeProfitPrice/stopLossPrice', async () => {
+    const acc = makeAccount()
+    const market = makeSwapMarket('ETH', 'USDT', 'ETH/USDT:USDT')
+    setInitialized(acc, { 'ETH/USDT:USDT': market })
+
+    ;(acc as any).orderSymbolCache.set('ord-tp', 'ETH/USDT:USDT')
+    ;(acc as any).exchange.fetchOpenOrder = vi.fn().mockResolvedValue({
+      id: 'ord-tp', symbol: 'ETH/USDT:USDT', side: 'buy', amount: 0.1,
+      type: 'limit', price: 1900, status: 'open',
+      takeProfitPrice: 2200,
+      stopLossPrice: 1800,
+    })
+
+    const result = await acc.getOrder('ord-tp')
+    expect(result!.tpsl).toEqual({
+      takeProfit: { price: '2200' },
+      stopLoss: { price: '1800' },
+    })
+  })
+
+  it('returns no tpsl when CCXT order has no TP/SL prices', async () => {
+    const acc = makeAccount()
+    const market = makeSwapMarket('ETH', 'USDT', 'ETH/USDT:USDT')
+    setInitialized(acc, { 'ETH/USDT:USDT': market })
+
+    ;(acc as any).orderSymbolCache.set('ord-plain', 'ETH/USDT:USDT')
+    ;(acc as any).exchange.fetchOpenOrder = vi.fn().mockResolvedValue({
+      id: 'ord-plain', symbol: 'ETH/USDT:USDT', side: 'buy', amount: 0.1,
+      type: 'limit', price: 1900, status: 'open',
+    })
+
+    const result = await acc.getOrder('ord-plain')
+    expect(result!.tpsl).toBeUndefined()
+  })
+
+  it('extracts only takeProfit when stopLossPrice is absent', async () => {
+    const acc = makeAccount()
+    const market = makeSwapMarket('ETH', 'USDT', 'ETH/USDT:USDT')
+    setInitialized(acc, { 'ETH/USDT:USDT': market })
+
+    ;(acc as any).orderSymbolCache.set('ord-tp-only', 'ETH/USDT:USDT')
+    ;(acc as any).exchange.fetchOpenOrder = vi.fn().mockResolvedValue({
+      id: 'ord-tp-only', symbol: 'ETH/USDT:USDT', side: 'buy', amount: 0.1,
+      type: 'limit', price: 1900, status: 'open',
+      takeProfitPrice: 2200,
+    })
+
+    const result = await acc.getOrder('ord-tp-only')
+    expect(result!.tpsl).toEqual({ takeProfit: { price: '2200' } })
+  })
 })
 
 // ==================== getOrder — default path (binance etc) ====================

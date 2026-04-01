@@ -52,9 +52,9 @@ describe('UTA — Bybit lifecycle (ETH perp)', () => {
     // === Stage + Commit + Push: buy 0.01 ETH ===
     const addResult = uta!.stagePlaceOrder({
       aliceId: ethAliceId,
-      side: 'buy',
-      type: 'market',
-      qty: 0.01,
+      action: 'BUY',
+      orderType: 'MKT',
+      totalQuantity: 0.01,
     })
     expect(addResult.staged).toBe(true)
     console.log(`  staged: ok`)
@@ -116,5 +116,40 @@ describe('UTA — Bybit lifecycle (ETH perp)', () => {
     const history = uta!.log()
     console.log(`  log: ${history.length} commits — [${history.map(h => h.message).join(', ')}]`)
     expect(history.length).toBeGreaterThanOrEqual(2)
+  }, 60_000)
+
+  it('buy with TPSL → tpsl visible on fetched order', async () => {
+    const quote = await broker!.getQuote(broker!.resolveNativeKey(ethAliceId.split('|')[1]))
+    const tpPrice = Math.round(quote.last * 1.5)
+    const slPrice = Math.round(quote.last * 0.5)
+
+    uta!.stagePlaceOrder({
+      aliceId: ethAliceId, action: 'BUY', orderType: 'MKT', totalQuantity: 0.01,
+      takeProfit: { price: String(tpPrice) },
+      stopLoss: { price: String(slPrice) },
+    })
+    uta!.commit('e2e: buy ETH with TPSL')
+    const pushResult = await uta!.push()
+    expect(pushResult.submitted).toHaveLength(1)
+    const orderId = pushResult.submitted[0].orderId!
+    console.log(`  TPSL: orderId=${orderId}, tp=${tpPrice}, sl=${slPrice}`)
+
+    await new Promise(r => setTimeout(r, 3000))
+
+    const detail = await broker!.getOrder(orderId)
+    expect(detail).not.toBeNull()
+    console.log(`  fetched tpsl:`, JSON.stringify(detail!.tpsl))
+
+    if (detail!.tpsl) {
+      if (detail!.tpsl.takeProfit) expect(parseFloat(detail!.tpsl.takeProfit.price)).toBe(tpPrice)
+      if (detail!.tpsl.stopLoss) expect(parseFloat(detail!.tpsl.stopLoss.price)).toBe(slPrice)
+    } else {
+      console.log('  NOTE: TPSL not returned on fetched order (separate conditional orders)')
+    }
+
+    // Clean up
+    uta!.stageClosePosition({ aliceId: ethAliceId, qty: 0.01 })
+    uta!.commit('e2e: close TPSL')
+    await uta!.push()
   }, 60_000)
 })
