@@ -55,6 +55,16 @@ export class ToolCenter {
     }))
   }
 
+  /** Look up a single tool by name (for detail / execute endpoints). */
+  get(name: string): Tool | null {
+    return this.tools[name]?.tool ?? null
+  }
+
+  /** Look up a tool's group by name. */
+  getGroup(name: string): string | null {
+    return this.tools[name]?.group ?? null
+  }
+
   /** Tool name list (for logging / debugging). */
   list(): string[] {
     return Object.keys(this.tools)
