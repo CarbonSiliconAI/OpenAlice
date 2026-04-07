@@ -13,7 +13,7 @@ let ctx: TestContext
 beforeAll(async () => { ctx = await getTestContext() })
 
 const exec = (model: string, params: Record<string, unknown> = {}) =>
-  ctx.executor.execute('yfinance', model, params, ctx.credentials)
+  ctx.executor.execute('yfinance', model, params, ctx.credentials) as Promise<unknown[]>
 
 describe('yfinance — equity', () => {
   it('EquityQuote', async () => { expect((await exec('EquityQuote', { symbol: 'AAPL' })).length).toBeGreaterThan(0) })

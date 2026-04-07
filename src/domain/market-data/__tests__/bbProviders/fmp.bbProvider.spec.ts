@@ -13,7 +13,7 @@ let ctx: TestContext
 beforeAll(async () => { ctx = await getTestContext() })
 
 const exec = (model: string, params: Record<string, unknown> = {}) =>
-  ctx.executor.execute('fmp', model, params, ctx.credentials)
+  ctx.executor.execute('fmp', model, params, ctx.credentials) as Promise<unknown[]>
 
 describe('fmp — equity', () => {
   beforeEach(({ skip }) => { if (!hasCredential(ctx.credentials, 'fmp')) skip('no fmp_api_key') })
