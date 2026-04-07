@@ -1,14 +1,11 @@
 import { headers } from './client'
-import type { WebChannel, VercelAiSdkOverride, AgentSdkOverride, CodexOverride } from './types'
+import type { WebChannel } from './types'
 
 export interface ChannelListItem {
   id: string
   label: string
   systemPrompt?: string
-  provider?: 'claude-code' | 'vercel-ai-sdk' | 'agent-sdk' | 'codex'
-  vercelAiSdk?: VercelAiSdkOverride
-  agentSdk?: AgentSdkOverride
-  codex?: CodexOverride
+  profile?: string
   disabledTools?: string[]
 }
 
@@ -33,7 +30,7 @@ export const channelsApi = {
   },
 
   async update(id: string, data: Partial<Omit<WebChannel, 'id'>>): Promise<{ channel: ChannelListItem }> {
-    const res = await fetch(`/api/channels/${encodeURIComponent(id)}`, {
+    const res = await fetch(`/api/channels/${id}`, {
       method: 'PUT',
       headers,
       body: JSON.stringify(data),
@@ -46,13 +43,7 @@ export const channelsApi = {
   },
 
   async remove(id: string): Promise<void> {
-    const res = await fetch(`/api/channels/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers,
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new Error(err.error || res.statusText)
-    }
+    const res = await fetch(`/api/channels/${id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error('Failed to delete channel')
   },
 }

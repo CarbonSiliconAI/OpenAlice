@@ -32,7 +32,8 @@ export const api = {
 // Re-export all types for convenience
 export type {
   WebChannel,
-  VercelAiSdkOverride,
+  Profile,
+  AIBackend,
   ChatMessage,
   ChatResponse,
   ToolCall,
@@ -53,7 +54,6 @@ export type {
   NewsCollectorConfig,
   NewsCollectorFeed,
   ToolCallRecord,
-  LoginMethod,
   UTASnapshotSummary,
   EquityCurvePoint,
 } from './types'

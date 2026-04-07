@@ -1,36 +1,24 @@
-// ==================== Channels ====================
+// ==================== AI Provider Profiles ====================
 
-export interface VercelAiSdkOverride {
-  provider: string
+export type AIBackend = 'agent-sdk' | 'codex' | 'vercel-ai-sdk'
+
+export interface Profile {
+  backend: AIBackend
+  label: string
   model: string
+  loginMethod?: string
+  provider?: string   // vercel-ai-sdk only
   baseUrl?: string
   apiKey?: string
 }
 
-export type LoginMethod = 'api-key' | 'claudeai' | 'codex-oauth'
-
-export interface AgentSdkOverride {
-  model?: string
-  baseUrl?: string
-  apiKey?: string
-  loginMethod?: LoginMethod
-}
-
-export interface CodexOverride {
-  model?: string
-  baseUrl?: string
-  apiKey?: string
-  loginMethod?: 'api-key' | 'codex-oauth'
-}
+// ==================== Channels ====================
 
 export interface WebChannel {
   id: string
   label: string
   systemPrompt?: string
-  provider?: 'claude-code' | 'vercel-ai-sdk' | 'agent-sdk' | 'codex'
-  vercelAiSdk?: VercelAiSdkOverride
-  agentSdk?: AgentSdkOverride
-  codex?: CodexOverride
+  profile?: string    // slug reference to a profile
   disabledTools?: string[]
 }
 
@@ -68,12 +56,9 @@ export type ChatHistoryItem =
 // ==================== Config ====================
 
 export interface AIProviderConfig {
-  backend: string
-  provider: string
-  model: string
-  baseUrl?: string
-  loginMethod?: LoginMethod
   apiKeys: { anthropic?: string; openai?: string; google?: string }
+  profiles: Record<string, Profile>
+  activeProfile: string
 }
 
 export interface AppConfig {
