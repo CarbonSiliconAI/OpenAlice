@@ -1,5 +1,5 @@
 import { headers } from './client'
-import type { AppConfig, Profile } from './types'
+import type { AppConfig, Profile, Preset } from './types'
 
 export const configApi = {
   async load(): Promise<AppConfig> {
@@ -23,6 +23,12 @@ export const configApi = {
 
   // ==================== Profile CRUD ====================
 
+  async getPresets(): Promise<{ presets: Preset[] }> {
+    const res = await fetch('/api/config/presets')
+    if (!res.ok) throw new Error('Failed to load presets')
+    return res.json()
+  },
+
   async getProfiles(): Promise<{ profiles: Record<string, Profile>; activeProfile: string }> {
     const res = await fetch('/api/config/profiles')
     if (!res.ok) throw new Error('Failed to load profiles')
@@ -43,7 +49,7 @@ export const configApi = {
   },
 
   async updateProfile(slug: string, profile: Profile): Promise<{ slug: string; profile: Profile }> {
-    const res = await fetch(`/api/config/profiles/${slug}`, {
+    const res = await fetch(`/api/config/profiles/${encodeURIComponent(slug)}`, {
       method: 'PUT',
       headers,
       body: JSON.stringify(profile),
@@ -56,11 +62,20 @@ export const configApi = {
   },
 
   async deleteProfile(slug: string): Promise<void> {
-    const res = await fetch(`/api/config/profiles/${slug}`, { method: 'DELETE' })
+    const res = await fetch(`/api/config/profiles/${encodeURIComponent(slug)}`, { method: 'DELETE' })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: 'Failed to delete profile' }))
       throw new Error(err.error || 'Failed to delete profile')
     }
+  },
+
+  async testProfile(profileData: Profile): Promise<{ ok: boolean; response?: string; error?: string }> {
+    const res = await fetch('/api/config/profiles/test', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(profileData),
+    })
+    return res.json()
   },
 
   async setActiveProfile(slug: string): Promise<void> {
@@ -75,20 +90,4 @@ export const configApi = {
     }
   },
 
-  // ==================== API Keys ====================
-
-  async updateApiKeys(keys: { anthropic?: string; openai?: string; google?: string }): Promise<void> {
-    const res = await fetch('/api/config/api-keys', {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify(keys),
-    })
-    if (!res.ok) throw new Error('Failed to update API keys')
-  },
-
-  async getApiKeysStatus(): Promise<{ anthropic: boolean; openai: boolean; google: boolean }> {
-    const res = await fetch('/api/config/api-keys/status')
-    if (!res.ok) throw new Error('Failed to load API key status')
-    return res.json()
-  },
 }

@@ -67,6 +67,8 @@ export class BrokerError extends Error {
  */
 export interface Position {
   contract: Contract
+  /** Currency denomination for all monetary fields (avgCost, marketPrice, marketValue, PnL). */
+  currency: string
   side: 'long' | 'short'
   quantity: Decimal
   avgCost: number
@@ -103,6 +105,8 @@ export interface OpenOrder {
 
 /** Field names aligned with IBKR AccountSummaryTags. */
 export interface AccountInfo {
+  /** Base currency of this account — all monetary fields are denominated in this currency. */
+  baseCurrency: string
   netLiquidation: number
   totalCashValue: number
   unrealizedPnL: number

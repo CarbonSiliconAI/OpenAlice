@@ -43,8 +43,8 @@ export class VercelAIProvider implements AIProvider {
     return { model, tools, instructions }
   }
 
-  async ask(prompt: string): Promise<ProviderResult> {
-    const { model, tools, instructions } = await this.resolve()
+  async ask(prompt: string, profile?: ResolvedProfile): Promise<ProviderResult> {
+    const { model, tools, instructions } = await this.resolve(undefined, profile)
     const media: MediaAttachment[] = []
 
     const result = await generateText({

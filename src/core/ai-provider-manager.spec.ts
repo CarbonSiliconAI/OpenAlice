@@ -150,7 +150,7 @@ describe('GenerateRouter', () => {
     const agentSdk = makeProvider('agent-sdk')
     const router = new GenerateRouter(vercel, agentSdk)
 
-    mockResolveProfile.mockResolvedValue({ backend: 'agent-sdk', label: 'Claude', model: 'claude-sonnet-4-6' })
+    mockResolveProfile.mockResolvedValue({ backend: 'agent-sdk', model: 'claude-sonnet-4-6' })
     const { provider } = await router.resolve('claude-main')
     expect(provider).toBe(agentSdk)
   })
@@ -159,7 +159,7 @@ describe('GenerateRouter', () => {
     const vercel = makeProvider('vercel-ai')
     const router = new GenerateRouter(vercel, null)
 
-    mockResolveProfile.mockResolvedValue({ backend: 'vercel-ai-sdk', label: 'Vercel', model: 'claude-sonnet-4-6', provider: 'anthropic' })
+    mockResolveProfile.mockResolvedValue({ backend: 'vercel-ai-sdk', model: 'claude-sonnet-4-6', provider: 'anthropic' })
     const { provider } = await router.resolve()
     expect(provider).toBe(vercel)
   })
@@ -168,7 +168,7 @@ describe('GenerateRouter', () => {
     const vercel = makeProvider('vercel-ai')
     const router = new GenerateRouter(vercel, null) // no agent-sdk
 
-    mockResolveProfile.mockResolvedValue({ backend: 'agent-sdk', label: 'Claude', model: 'x' })
+    mockResolveProfile.mockResolvedValue({ backend: 'agent-sdk', model: 'x' })
     await expect(router.resolve('test')).rejects.toThrow('No provider registered for backend')
   })
 
@@ -177,7 +177,7 @@ describe('GenerateRouter', () => {
     const codex = makeProvider('codex')
     const router = new GenerateRouter(vercel, null, codex)
 
-    mockResolveProfile.mockResolvedValue({ backend: 'codex', label: 'GPT', model: 'gpt-5.4' })
+    mockResolveProfile.mockResolvedValue({ backend: 'codex', model: 'gpt-5.4' })
     const { provider, profile } = await router.resolve('gpt-main')
     expect(provider).toBe(codex)
     expect(profile.model).toBe('gpt-5.4')
@@ -187,9 +187,9 @@ describe('GenerateRouter', () => {
     const vercel = makeProvider('vercel-ai')
     const router = new GenerateRouter(vercel, null)
 
-    mockResolveProfile.mockResolvedValue({ backend: 'vercel-ai-sdk', label: 'V', model: 'x', provider: 'anthropic' })
+    mockResolveProfile.mockResolvedValue({ backend: 'vercel-ai-sdk', model: 'x', provider: 'anthropic' })
     const result = await router.ask('test prompt')
     expect(result.text).toBe('from-vercel-ai')
-    expect(vercel.ask).toHaveBeenCalledWith('test prompt')
+    expect(vercel.ask).toHaveBeenCalledWith('test prompt', expect.objectContaining({ backend: 'vercel-ai-sdk' }))
   })
 })

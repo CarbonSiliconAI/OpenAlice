@@ -204,6 +204,7 @@ describe('Snapshot Store', () => {
       timestamp: new Date().toISOString(),
       trigger: 'manual',
       account: {
+        baseCurrency: 'USD',
         netLiquidation: '100000',
         totalCashValue: '90000',
         unrealizedPnL: '5000',

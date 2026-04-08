@@ -120,7 +120,20 @@ export class GenerateRouter {
 
   /** Stateless ask — delegates to the active profile's provider. */
   async ask(prompt: string): Promise<ProviderResult> {
-    const { provider } = await this.resolve()
-    return provider.ask(prompt)
+    const { provider, profile } = await this.resolve()
+    return provider.ask(prompt, profile)
+  }
+
+  /** Ask with a specific profile (by slug). Used for connection testing. */
+  async askWithProfileSlug(prompt: string, profileSlug: string): Promise<ProviderResult> {
+    const { provider, profile } = await this.resolve(profileSlug)
+    return provider.ask(prompt, profile)
+  }
+
+  /** Ask with an inline profile (not saved to config). Used for pre-save testing. */
+  async askWithProfile(prompt: string, profile: ResolvedProfile): Promise<ProviderResult> {
+    const provider = this.providers[profile.backend]
+    if (!provider) throw new Error(`No provider registered for backend: ${profile.backend}`)
+    return provider.ask(prompt, profile)
   }
 }

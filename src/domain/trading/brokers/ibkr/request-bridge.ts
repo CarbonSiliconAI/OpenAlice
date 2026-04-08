@@ -458,6 +458,7 @@ export class RequestBridge extends DefaultEWrapper {
 
     this.accountCachePending_.positions.push({
       contract,
+      currency: contract.currency || 'USD',
       side: position.greaterThan(0) ? 'long' : 'short',
       quantity: position.abs(),
       avgCost: averageCost,

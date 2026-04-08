@@ -4,12 +4,44 @@ export type AIBackend = 'agent-sdk' | 'codex' | 'vercel-ai-sdk'
 
 export interface Profile {
   backend: AIBackend
-  label: string
   model: string
+  preset?: string     // preset ID this profile was created from
   loginMethod?: string
   provider?: string   // vercel-ai-sdk only
   baseUrl?: string
   apiKey?: string
+}
+
+// ==================== AI Provider Presets ====================
+
+export interface Preset {
+  id: string
+  label: string
+  description: string
+  category: 'official' | 'third-party' | 'custom'
+  hint?: string
+  defaultName: string
+  schema: JsonSchema
+}
+
+/** Subset of JSON Schema types we use for form rendering. */
+export interface JsonSchema {
+  type?: string
+  properties?: Record<string, JsonSchemaProperty>
+  required?: string[]
+  [key: string]: unknown
+}
+
+export interface JsonSchemaProperty {
+  type?: string
+  const?: unknown
+  enum?: string[]
+  oneOf?: Array<{ const: string; title: string }>
+  default?: unknown
+  title?: string
+  description?: string
+  writeOnly?: boolean
+  [key: string]: unknown
 }
 
 // ==================== Channels ====================

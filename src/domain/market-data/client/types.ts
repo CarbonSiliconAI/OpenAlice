@@ -54,6 +54,7 @@ export interface CryptoClientLike {
 export interface CurrencyClientLike {
   search(params: Record<string, unknown>): Promise<Record<string, unknown>[]>
   getHistorical(params: Record<string, unknown>): Promise<CurrencyHistoricalData[]>
+  getSnapshots(params: Record<string, unknown>): Promise<CurrencySnapshotsData[]>
 }
 
 export interface EtfClientLike {

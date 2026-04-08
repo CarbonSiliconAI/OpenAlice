@@ -11,6 +11,7 @@ import { z } from 'zod'
 import { Contract, UNSET_DOUBLE, UNSET_DECIMAL } from '@traderalice/ibkr'
 import type { AccountManager } from '@/domain/trading/account-manager.js'
 import { BrokerError, type OpenOrder } from '@/domain/trading/brokers/types.js'
+import type { FxService } from '@/domain/trading/fx-service.js'
 import '@/domain/trading/contract-ext.js'
 
 /** Classify a broker error into a structured response for AI consumption. */
@@ -59,7 +60,7 @@ const sourceDesc = (required: boolean, extra?: string) => {
   return base + req + (extra ? ` ${extra}` : '')
 }
 
-export function createTradingTools(manager: AccountManager): Record<string, Tool> {
+export function createTradingTools(manager: AccountManager, fxService?: FxService): Record<string, Tool> {
   return {
     listAccounts: tool({
       description: 'List all registered trading accounts with their id, provider, label, and capabilities.',
@@ -141,24 +142,50 @@ If this tool returns an error with transient=true, wait a few seconds and retry 
         if (targets.length === 0) return { positions: [], message: 'No accounts available.' }
         try {
           const allPositions: Array<Record<string, unknown>> = []
+          const fxWarnings: string[] = []
           for (const uta of targets) {
             const positions = await uta.getPositions()
             const accountInfo = await uta.getAccount()
-            const totalMarketValue = positions.reduce((sum, p) => sum + p.marketValue, 0)
+
+            // Convert position market values to USD for cross-currency percentage calculations
+            let totalMarketValueUsd = 0
+            const posUsdValues: number[] = []
             for (const pos of positions) {
-              if (symbol && symbol !== 'all' && pos.contract.symbol !== symbol) continue
-              const percentOfEquity = accountInfo.netLiquidation > 0 ? (pos.marketValue / accountInfo.netLiquidation) * 100 : 0
-              const percentOfPortfolio = totalMarketValue > 0 ? (pos.marketValue / totalMarketValue) * 100 : 0
+              if (fxService && pos.currency !== 'USD') {
+                const r = await fxService.convertToUsd(pos.marketValue, pos.currency)
+                posUsdValues.push(r.usd)
+                if (r.fxWarning && !fxWarnings.includes(r.fxWarning)) fxWarnings.push(r.fxWarning)
+              } else {
+                posUsdValues.push(pos.marketValue)
+              }
+              totalMarketValueUsd += posUsdValues[posUsdValues.length - 1]
+            }
+
+            // Account netLiq in USD for equity percentage
+            let netLiqUsd = accountInfo.netLiquidation
+            if (fxService && accountInfo.baseCurrency !== 'USD') {
+              const r = await fxService.convertToUsd(accountInfo.netLiquidation, accountInfo.baseCurrency)
+              netLiqUsd = r.usd
+            }
+
+            let idx = 0
+            for (const pos of positions) {
+              if (symbol && symbol !== 'all' && pos.contract.symbol !== symbol) { idx++; continue }
+              const mvUsd = posUsdValues[idx]
+              const percentOfEquity = netLiqUsd > 0 ? (mvUsd / netLiqUsd) * 100 : 0
+              const percentOfPortfolio = totalMarketValueUsd > 0 ? (mvUsd / totalMarketValueUsd) * 100 : 0
               allPositions.push({
-                source: uta.id, symbol: pos.contract.symbol, side: pos.side,
+                source: uta.id, symbol: pos.contract.symbol, currency: pos.currency, side: pos.side,
                 quantity: pos.quantity.toNumber(), avgCost: pos.avgCost, marketPrice: pos.marketPrice,
                 marketValue: pos.marketValue, unrealizedPnL: pos.unrealizedPnL, realizedPnL: pos.realizedPnL,
                 percentageOfEquity: `${percentOfEquity.toFixed(1)}%`,
                 percentageOfPortfolio: `${percentOfPortfolio.toFixed(1)}%`,
               })
+              idx++
             }
           }
           if (allPositions.length === 0) return { positions: [], message: 'No open positions.' }
+          if (fxWarnings.length > 0) return { positions: allPositions, fxWarnings }
           return allPositions
         } catch (err) {
           return handleBrokerError(err)

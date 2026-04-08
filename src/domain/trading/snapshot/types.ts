@@ -17,6 +17,7 @@ export interface UTASnapshot {
   trigger: SnapshotTrigger
 
   account: {
+    baseCurrency: string
     netLiquidation: string
     totalCashValue: string
     unrealizedPnL: string
@@ -28,6 +29,7 @@ export interface UTASnapshot {
 
   positions: Array<{
     aliceId: string
+    currency: string
     side: 'long' | 'short'
     quantity: string
     avgCost: string

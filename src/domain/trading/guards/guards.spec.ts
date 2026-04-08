@@ -41,6 +41,7 @@ function makeContext(overrides: {
     operation: overrides.operation ?? makePlaceOrderOp(),
     positions: overrides.positions ?? [],
     account: {
+      baseCurrency: 'USD',
       netLiquidation: 100_000,
       totalCashValue: 100_000,
       unrealizedPnL: 0,

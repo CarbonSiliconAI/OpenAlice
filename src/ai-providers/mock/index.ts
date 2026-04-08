@@ -54,7 +54,7 @@ export class MockAIProvider implements AIProvider {
     this._askResult = opts?.askResult ?? 'mock-ask-result'
   }
 
-  async ask(prompt: string): Promise<ProviderResult> {
+  async ask(prompt: string, _profile?: unknown): Promise<ProviderResult> {
     this.askCalls.push(prompt)
     return { text: this._askResult, media: [] }
   }

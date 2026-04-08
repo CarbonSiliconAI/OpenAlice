@@ -125,9 +125,12 @@ export async function askAgentSdk(
   if (isOAuthMode) {
     // Force OAuth by removing any inherited API key
     delete env.ANTHROPIC_API_KEY
+    delete env.CLAUDE_CODE_SIMPLE
   } else {
     const apiKey = override?.apiKey
     if (apiKey) env.ANTHROPIC_API_KEY = apiKey
+    // Force API key mode — disable OAuth even if local login exists
+    env.CLAUDE_CODE_SIMPLE = '1'
   }
   const baseUrl = override?.baseUrl
   if (baseUrl) env.ANTHROPIC_BASE_URL = baseUrl

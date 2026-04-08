@@ -1,16 +1,18 @@
 import { Hono } from 'hono'
 import {
   loadConfig, writeConfigSection, readAIProviderConfig, validSections,
-  writeProfile, deleteProfile, setActiveProfile, writeApiKeys,
+  writeProfile, deleteProfile, setActiveProfile,
   profileSchema, type ConfigSection, type Profile,
 } from '../../../core/config.js'
 import type { EngineContext } from '../../../core/types.js'
+import { BUILTIN_PRESETS } from '../../../ai-providers/presets.js'
 
 interface ConfigRouteOpts {
+  ctx?: EngineContext
   onConnectorsChange?: () => Promise<void>
 }
 
-/** Config routes: GET /, PUT /:section, profile CRUD, api-keys */
+/** Config routes: GET /, PUT /:section, profile CRUD, presets, test */
 export function createConfigRoutes(opts?: ConfigRouteOpts) {
   const app = new Hono()
 
@@ -39,8 +41,8 @@ export function createConfigRoutes(opts?: ConfigRouteOpts) {
   app.post('/profiles', async (c) => {
     try {
       const body = await c.req.json<{ slug: string; profile: Profile }>()
-      if (!body.slug || !/^[a-z0-9-]+$/.test(body.slug)) {
-        return c.json({ error: 'slug must be lowercase alphanumeric with hyphens' }, 400)
+      if (!body.slug?.trim()) {
+        return c.json({ error: 'Profile name is required' }, 400)
       }
       const config = await readAIProviderConfig()
       if (config.profiles[body.slug]) {
@@ -95,29 +97,23 @@ export function createConfigRoutes(opts?: ConfigRouteOpts) {
     }
   })
 
-  // ==================== API Keys ====================
+  // ==================== Presets ====================
 
-  /** PUT /api-keys — update global API keys */
-  app.put('/api-keys', async (c) => {
-    try {
-      const body = await c.req.json<{ anthropic?: string; openai?: string; google?: string }>()
-      await writeApiKeys(body)
-      return c.json({ success: true })
-    } catch (err) {
-      return c.json({ error: String(err) }, 500)
-    }
-  })
+  /** GET /presets — built-in preset templates for profile creation */
+  app.get('/presets', (c) => c.json({ presets: BUILTIN_PRESETS }))
 
-  app.get('/api-keys/status', async (c) => {
+  // ==================== Profile Test ====================
+
+  /** POST /profiles/test — test profile config by sending "Hi" (without saving) */
+  app.post('/profiles/test', async (c) => {
+    if (!opts?.ctx) return c.json({ ok: false, error: 'Test not available' }, 500)
     try {
-      const config = await readAIProviderConfig()
-      return c.json({
-        anthropic: !!config.apiKeys.anthropic,
-        openai: !!config.apiKeys.openai,
-        google: !!config.apiKeys.google,
-      })
+      const profileData = await c.req.json<Profile>()
+      const validated = profileSchema.parse(profileData)
+      const result = await opts.ctx.agentCenter.testWithProfile(validated, 'Hi')
+      return c.json({ ok: true, response: result.text })
     } catch (err) {
-      return c.json({ error: String(err) }, 500)
+      return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) })
     }
   })
 

@@ -18,8 +18,8 @@ import type { Operation } from '../../domain/trading/git/types.js'
 import { getOperationSymbol } from '../../domain/trading/git/types.js'
 
 /** Build a display label for a profile. */
-function profileLabel(slug: string, profile: { label: string; backend: string; model: string }): string {
-  return `${profile.label} (${profile.model})`
+function profileLabel(name: string, profile: { model: string }): string {
+  return `${name} (${profile.model})`
 }
 
 export class TelegramPlugin implements Plugin {
@@ -125,9 +125,9 @@ export class TelegramPlugin implements Plugin {
 
           // Edit the original settings message in-place
           const keyboard = new InlineKeyboard()
-          for (const [s, p] of Object.entries(config.profiles)) {
+          for (const s of Object.keys(config.profiles)) {
             const prefix = s === slug ? '> ' : ''
-            keyboard.text(`${prefix}${p.label}`, `profile:${s}`)
+            keyboard.text(`${prefix}${s}`, `profile:${s}`)
           }
           await ctx.editMessageText(
             `Current profile: ${label}\n\nChoose AI profile:`,
@@ -343,9 +343,9 @@ export class TelegramPlugin implements Plugin {
     const activeLabel = activeProfile ? profileLabel(config.activeProfile, activeProfile) : config.activeProfile
 
     const keyboard = new InlineKeyboard()
-    for (const [slug, profile] of Object.entries(config.profiles)) {
+    for (const slug of Object.keys(config.profiles)) {
       const prefix = slug === config.activeProfile ? '> ' : ''
-      keyboard.text(`${prefix}${profile.label}`, `profile:${slug}`)
+      keyboard.text(`${prefix}${slug}`, `profile:${slug}`)
     }
 
     await this.bot!.api.sendMessage(

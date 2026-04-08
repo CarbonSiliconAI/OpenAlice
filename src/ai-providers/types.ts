@@ -46,8 +46,8 @@ export interface GenerateOpts {
 export interface AIProvider {
   /** Session log provenance tag. */
   readonly providerTag: 'vercel-ai' | 'claude-code' | 'agent-sdk' | 'codex'
-  /** Stateless one-shot prompt (used for compaction summarization, etc.). */
-  ask(prompt: string): Promise<ProviderResult>
+  /** Stateless one-shot prompt. Profile controls auth/model/endpoint. */
+  ask(prompt: string, profile?: ResolvedProfile): Promise<ProviderResult>
   /** Stream events from the backend. Yields tool_use/tool_result/text, then done. */
   generate(entries: SessionEntry[], prompt: string, opts?: GenerateOpts): AsyncIterable<ProviderEvent>
   /**

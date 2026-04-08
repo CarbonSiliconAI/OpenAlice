@@ -319,6 +319,7 @@ export class AlpacaBroker implements IBroker {
       ).toNumber()
 
       return {
+        baseCurrency: 'USD',
         netLiquidation: parseFloat(account.equity),
         totalCashValue: parseFloat(account.cash),
         unrealizedPnL,
@@ -336,6 +337,7 @@ export class AlpacaBroker implements IBroker {
 
       return raw.map(p => ({
         contract: makeContract(p.symbol),
+        currency: 'USD',
         side: p.side === 'long' ? 'long' as const : 'short' as const,
         quantity: new Decimal(p.qty),
         avgCost: parseFloat(p.avg_entry_price),

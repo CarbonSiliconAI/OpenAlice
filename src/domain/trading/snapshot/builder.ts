@@ -31,6 +31,7 @@ export async function buildSnapshot(
       timestamp: new Date().toISOString(),
       trigger,
       account: {
+        baseCurrency: accountInfo.baseCurrency,
         netLiquidation: String(accountInfo.netLiquidation),
         totalCashValue: String(accountInfo.totalCashValue),
         unrealizedPnL: String(accountInfo.unrealizedPnL),
@@ -41,6 +42,7 @@ export async function buildSnapshot(
       },
       positions: positions.map(p => ({
         aliceId: p.contract.aliceId ?? uta.broker.getNativeKey(p.contract),
+        currency: p.currency,
         side: p.side,
         quantity: p.quantity.toString(),
         avgCost: String(p.avgCost),

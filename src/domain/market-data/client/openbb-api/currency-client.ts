@@ -7,7 +7,7 @@
 
 import type { OBBjectResponse } from '../../currency/types/index'
 import { buildCredentialsHeader } from '../../credential-map'
-import type { CurrencyHistoricalData } from '@traderalice/opentypebb'
+import type { CurrencyHistoricalData, CurrencySnapshotsData } from '@traderalice/opentypebb'
 
 export class OpenBBCurrencyClient {
   private baseUrl: string
@@ -41,7 +41,7 @@ export class OpenBBCurrencyClient {
   // ==================== Snapshots ====================
 
   async getSnapshots(params: Record<string, unknown>) {
-    return this.request('/snapshots', params)
+    return this.request<CurrencySnapshotsData>('/snapshots', params)
   }
 
   // ==================== Internal ====================

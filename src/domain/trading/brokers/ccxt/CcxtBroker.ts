@@ -41,6 +41,13 @@ import {
   defaultCancelOrderById,
 } from './overrides.js'
 
+const STABLECOIN_TO_USD = new Set(['USDT', 'USDC', 'BUSD', 'DAI', 'TUSD'])
+
+/** Normalize stablecoin quote currencies to 'USD' so they don't trigger FX conversion. */
+function normalizeQuoteCurrency(quote: string): string {
+  return STABLECOIN_TO_USD.has(quote.toUpperCase()) ? 'USD' : quote
+}
+
 /** Map IBKR orderType codes to CCXT order type strings. */
 function ibkrOrderTypeToCcxt(orderType: string): string {
   switch (orderType) {
@@ -475,6 +482,7 @@ export class CcxtBroker implements IBroker<CcxtBrokerMeta> {
       const netLiquidation = free + totalPositionValue
 
       return {
+        baseCurrency: 'USD',
         netLiquidation,
         totalCashValue: free,
         unrealizedPnL,
@@ -510,6 +518,7 @@ export class CcxtBroker implements IBroker<CcxtBrokerMeta> {
 
         result.push({
           contract: marketToContract(market, this.exchangeName),
+          currency: normalizeQuoteCurrency(market.quote ?? 'USDT'),
           side: p.side === 'long' ? 'long' : 'short',
           quantity,
           avgCost: entryPrice,

@@ -16,6 +16,7 @@ import { readAccountsConfig, type AccountConfig } from '../../core/config.js'
 import type { EventLog } from '../../core/event-log.js'
 import type { ToolCenter } from '../../core/tool-center.js'
 import type { ReconnectResult } from '../../core/types.js'
+import type { FxService } from './fx-service.js'
 import './contract-ext.js'
 
 // ==================== Account summary ====================
@@ -34,9 +35,12 @@ export interface AggregatedEquity {
   totalCash: number
   totalUnrealizedPnL: number
   totalRealizedPnL: number
+  /** Present when one or more accounts used fallback FX rates. */
+  fxWarnings?: string[]
   accounts: Array<{
     id: string
     label: string
+    baseCurrency: string
     equity: number
     cash: number
     unrealizedPnL: number
@@ -65,14 +69,20 @@ export class AccountManager {
   private eventLog?: EventLog
   private toolCenter?: ToolCenter
   private _snapshotHooks?: SnapshotHooks
+  private fxService?: FxService
 
-  constructor(deps?: { eventLog: EventLog; toolCenter: ToolCenter }) {
+  constructor(deps?: { eventLog: EventLog; toolCenter: ToolCenter; fxService?: FxService }) {
     this.eventLog = deps?.eventLog
     this.toolCenter = deps?.toolCenter
+    this.fxService = deps?.fxService
   }
 
   setSnapshotHooks(hooks: SnapshotHooks): void {
     this._snapshotHooks = hooks
+  }
+
+  setFxService(fx: FxService): void {
+    this.fxService = fx
   }
 
   // ==================== Lifecycle ====================
@@ -237,26 +247,46 @@ export class AccountManager {
     let totalCash = 0
     let totalUnrealizedPnL = 0
     let totalRealizedPnL = 0
+    const fxWarnings: string[] = []
     const accounts: AggregatedEquity['accounts'] = []
 
     for (const { id, label, health, info } of results) {
+      const baseCurrency = info?.baseCurrency ?? 'USD'
       if (info) {
-        totalEquity += info.netLiquidation
-        totalCash += info.totalCashValue
-        totalUnrealizedPnL += info.unrealizedPnL
-        totalRealizedPnL += info.realizedPnL ?? 0
+        if (this.fxService && baseCurrency !== 'USD') {
+          // Convert non-USD account values to USD
+          const [eqR, cashR, pnlR, rpnlR] = await Promise.all([
+            this.fxService.convertToUsd(info.netLiquidation, baseCurrency),
+            this.fxService.convertToUsd(info.totalCashValue, baseCurrency),
+            this.fxService.convertToUsd(info.unrealizedPnL, baseCurrency),
+            this.fxService.convertToUsd(info.realizedPnL ?? 0, baseCurrency),
+          ])
+          totalEquity += eqR.usd
+          totalCash += cashR.usd
+          totalUnrealizedPnL += pnlR.usd
+          totalRealizedPnL += rpnlR.usd
+          // Collect warnings (deduplicate — same currency produces same warning)
+          const w = eqR.fxWarning
+          if (w && !fxWarnings.includes(w)) fxWarnings.push(w)
+          accounts.push({ id, label, baseCurrency, equity: eqR.usd, cash: cashR.usd, unrealizedPnL: pnlR.usd, health })
+        } else {
+          // Already USD or no FxService — pass through
+          totalEquity += info.netLiquidation
+          totalCash += info.totalCashValue
+          totalUnrealizedPnL += info.unrealizedPnL
+          totalRealizedPnL += info.realizedPnL ?? 0
+          accounts.push({ id, label, baseCurrency, equity: info.netLiquidation, cash: info.totalCashValue, unrealizedPnL: info.unrealizedPnL, health })
+        }
+      } else {
+        accounts.push({ id, label, baseCurrency, equity: 0, cash: 0, unrealizedPnL: 0, health })
       }
-      accounts.push({
-        id,
-        label,
-        equity: info?.netLiquidation ?? 0,
-        cash: info?.totalCashValue ?? 0,
-        unrealizedPnL: info?.unrealizedPnL ?? 0,
-        health,
-      })
     }
 
-    return { totalEquity, totalCash, totalUnrealizedPnL, totalRealizedPnL, accounts }
+    return {
+      totalEquity, totalCash, totalUnrealizedPnL, totalRealizedPnL,
+      fxWarnings: fxWarnings.length > 0 ? fxWarnings : undefined,
+      accounts,
+    }
   }
 
   // ==================== Cross-account contract search ====================

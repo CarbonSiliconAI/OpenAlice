@@ -9,6 +9,7 @@ import { WebPlugin } from './connectors/web/index.js'
 import { McpAskPlugin } from './connectors/mcp-ask/index.js'
 import { createThinkingTools } from './tool/thinking.js'
 import { AccountManager, createSnapshotService, createSnapshotScheduler } from './domain/trading/index.js'
+import { FxService } from './domain/trading/fx-service.js'
 import { createTradingTools } from './tool/trading.js'
 import { Brain } from './domain/brain/index.js'
 import { createBrainTools } from './tool/brain.js'
@@ -186,6 +187,11 @@ async function main() {
 
   // OpenBB API server is started later via optionalPlugins
 
+  // ==================== FX Service ====================
+
+  const fxService = new FxService(currencyClient)
+  accountManager.setFxService(fxService)
+
   // ==================== Equity Symbol Index ====================
 
   const symbolIndex = new SymbolIndex()
@@ -197,7 +203,7 @@ async function main() {
 
   // One unified set of trading tools — routes via `source` parameter at runtime
   toolCenter.register(
-    createTradingTools(accountManager),
+    createTradingTools(accountManager, fxService),
     'trading',
   )
 

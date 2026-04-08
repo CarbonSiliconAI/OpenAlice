@@ -73,6 +73,7 @@ export class WebPlugin implements Plugin {
     app.route('/api/channels', createChannelsRoutes({ sessions, sseByChannel: this.sseByChannel }))
     app.route('/api/media', createMediaRoutes())
     app.route('/api/config', createConfigRoutes({
+      ctx,
       onConnectorsChange: async () => { await ctx.reconnectConnectors() },
     }))
     app.route('/api/market-data', createMarketDataRoutes(ctx))

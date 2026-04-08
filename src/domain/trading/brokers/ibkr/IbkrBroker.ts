@@ -283,6 +283,7 @@ export class IbkrBroker implements IBroker {
       : parseFloat(download.values.get('UnrealizedPnL') ?? '0')
 
     return {
+      baseCurrency: download.values.get('BaseCurrency') ?? 'USD',
       netLiquidation,
       totalCashValue,
       unrealizedPnL,

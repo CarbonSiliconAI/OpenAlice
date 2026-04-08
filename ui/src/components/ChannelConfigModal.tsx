@@ -102,7 +102,7 @@ export function ChannelConfigModal({ channel, onClose, onSaved }: ChannelConfigM
             >
               <option value="">Default (global active)</option>
               {Object.entries(profiles).map(([slug, p]) => (
-                <option key={slug} value={slug}>{p.label} ({p.model})</option>
+                <option key={slug} value={slug}>{slug} ({p.model})</option>
               ))}
             </select>
           </div>

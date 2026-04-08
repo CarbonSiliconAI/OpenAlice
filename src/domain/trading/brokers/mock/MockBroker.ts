@@ -59,6 +59,7 @@ export interface MockBrokerOptions {
 // ==================== Defaults ====================
 
 export const DEFAULT_ACCOUNT_INFO: AccountInfo = {
+  baseCurrency: 'USD',
   netLiquidation: 105_000,
   totalCashValue: 100_000,
   unrealizedPnL: 5_000,
@@ -87,6 +88,7 @@ export function makePosition(overrides: Partial<Position> = {}): Position {
   const contract = overrides.contract ?? makeContract()
   return {
     contract,
+    currency: contract.currency || 'USD',
     side: 'long',
     quantity: new Decimal(10),
     avgCost: 150,
@@ -154,7 +156,7 @@ export class MockBroker implements IBroker {
     this._cash = new Decimal(options.cash ?? 100_000)
     if (options.accountInfo) {
       this._accountOverride = {
-        netLiquidation: 0, totalCashValue: 0, unrealizedPnL: 0, realizedPnL: 0,
+        baseCurrency: 'USD', netLiquidation: 0, totalCashValue: 0, unrealizedPnL: 0, realizedPnL: 0,
         ...options.accountInfo,
       }
     }
@@ -339,6 +341,7 @@ export class MockBroker implements IBroker {
 
     const cash = this._cash.toNumber()
     return {
+      baseCurrency: 'USD',
       netLiquidation: cash + marketValue,
       totalCashValue: cash,
       unrealizedPnL,
@@ -354,6 +357,7 @@ export class MockBroker implements IBroker {
       const price = this._quotes.get(pos.contract.symbol ?? '') ?? pos.avgCost.toNumber()
       result.push({
         contract: pos.contract,
+        currency: pos.contract.currency || 'USD',
         side: pos.side,
         quantity: pos.quantity,
         avgCost: pos.avgCost.toNumber(),
@@ -479,10 +483,13 @@ export class MockBroker implements IBroker {
 
   /** Override account info directly. Bypasses computed values from positions. */
   setAccountInfo(info: Partial<AccountInfo>): void {
-    this._accountOverride = {
-      netLiquidation: 0, totalCashValue: 0, unrealizedPnL: 0, realizedPnL: 0,
-      ...this._accountOverride, ...info,
+    const base: AccountInfo = {
+      baseCurrency: 'USD', netLiquidation: 0, totalCashValue: 0, unrealizedPnL: 0, realizedPnL: 0,
+      ...this._accountOverride,
     }
+    Object.assign(base, info)
+    if (!base.baseCurrency) base.baseCurrency = 'USD'
+    this._accountOverride = base
   }
 
   // ==================== Internal ====================
