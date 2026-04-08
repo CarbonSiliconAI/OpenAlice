@@ -134,25 +134,6 @@ function SchemaFormFields({ fields, formData, setField, existingProfile }: {
         const label = field.required ? field.title : `${field.title} (optional)`
         const hasExisting = existingProfile && field.key === 'apiKey' && !!(existingProfile as unknown as Record<string, unknown>)[field.key]
 
-        if (field.type === 'select-custom') {
-          const isCustom = value === '__custom__' || (value && !field.options?.some(o => o.value === value))
-          return (
-            <Field key={field.key} label={label} description={field.description}>
-              <select className={inputClass}
-                value={field.options?.some(o => o.value === value) ? value : (value ? '__custom__' : (field.options?.[0]?.value ?? ''))}
-                onChange={(e) => setField(field.key, e.target.value === '__custom__' ? '' : e.target.value)}>
-                {field.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                <option value="__custom__">Custom...</option>
-              </select>
-              {isCustom && (
-                <input className={`${inputClass} mt-2`} value={formData[`${field.key}__custom`] ?? value}
-                  onChange={(e) => { setField(field.key, e.target.value); setField(`${field.key}__custom`, e.target.value) }}
-                  placeholder="Enter custom value" />
-              )}
-            </Field>
-          )
-        }
-
         if (field.type === 'select') {
           return (
             <Field key={field.key} label={label} description={field.description}>

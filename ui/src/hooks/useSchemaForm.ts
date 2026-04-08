@@ -5,14 +5,14 @@
  * Components just iterate `fields` and render by `type`.
  */
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import type { JsonSchema, JsonSchemaProperty } from '../api/types'
 
 // ==================== Types ====================
 
 export interface SchemaField {
   key: string
-  type: 'text' | 'password' | 'select' | 'select-custom'
+  type: 'text' | 'password' | 'select'
   title: string
   description?: string
   required: boolean
@@ -63,7 +63,7 @@ export function useSchemaForm(
         fields.push({ key, type: 'password', title, description: prop.description, required: isRequired })
       } else if (prop.oneOf) {
         const options = prop.oneOf.map(o => ({ value: o.const, label: o.title }))
-        fields.push({ key, type: 'select-custom', title, description: prop.description, required: isRequired, options })
+        fields.push({ key, type: 'select', title, description: prop.description, required: isRequired, options })
       } else if (prop.enum) {
         const options = prop.enum.map(v => ({ value: v, label: v }))
         fields.push({ key, type: 'select', title, description: prop.description, required: isRequired, options })
@@ -80,11 +80,20 @@ export function useSchemaForm(
     return { constValues: consts, fieldDefs: fields, defaults: defs }
   }, [schema])
 
-  // Form state — initialized from provided values or schema defaults
+  // Form state — reset when schema changes (e.g. user picks a different preset)
   const [formData, setFormData] = useState<Record<string, string>>(() => ({
     ...defaults,
     ...(initialValues ?? {}),
   }))
+
+  // Re-initialize when defaults change (schema switch)
+  const prevDefaults = useRef(defaults)
+  useEffect(() => {
+    if (prevDefaults.current !== defaults) {
+      prevDefaults.current = defaults
+      setFormData({ ...defaults, ...(initialValues ?? {}) })
+    }
+  }, [defaults, initialValues])
 
   const setField = useCallback((key: string, value: string) => {
     setFormData(prev => ({ ...prev, [key]: value }))
