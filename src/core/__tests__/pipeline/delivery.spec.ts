@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { StreamableResult, type ProviderEvent } from '../../ai-provider-manager.js'
 import { ConnectorCenter } from '../../connector-center.js'
 import { createEventLog } from '../../event-log.js'
+import { createListenerRegistry } from '../../listener-registry.js'
 import type { MediaAttachment } from '../../types.js'
 import {
   MockConnector,
@@ -170,8 +171,10 @@ describe('ConnectorCenter — delivery', () => {
 
   it('C9: resolveTarget follows lastInteraction via EventLog', async () => {
     const eventLog = await createEventLog({ logPath: `/tmp/test-pipeline-c9-${Date.now()}.jsonl` })
+    const listenerRegistry = createListenerRegistry(eventLog)
+    await listenerRegistry.start()
     try {
-      const cc = new ConnectorCenter(eventLog)
+      const cc = new ConnectorCenter({ eventLog, listenerRegistry })
 
       const web = new MockConnector({ channel: 'web' })
       const telegram = new MockConnector({ channel: 'telegram' })

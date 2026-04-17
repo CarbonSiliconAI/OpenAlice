@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { createEventLog, type EventLog, type EventLogEntry } from '../../core/event-log.js'
+import { createEventLog, type EventLog } from '../../core/event-log.js'
+import { createListenerRegistry, type ListenerRegistry } from '../../core/listener-registry.js'
 import { createCronListener, type CronListener } from './listener.js'
 import { SessionStore } from '../../core/session.js'
 import type { CronFirePayload } from './engine.js'
@@ -35,7 +36,8 @@ function createMockEngine(response = 'AI reply') {
 
 describe('cron listener', () => {
   let eventLog: EventLog
-  let listener: CronListener
+  let registry: ListenerRegistry
+  let cronListener: CronListener
   let mockEngine: ReturnType<typeof createMockEngine>
   let session: SessionStore
   let logPath: string
@@ -44,20 +46,23 @@ describe('cron listener', () => {
   beforeEach(async () => {
     logPath = tempPath('jsonl')
     eventLog = await createEventLog({ logPath })
+    registry = createListenerRegistry(eventLog)
     mockEngine = createMockEngine()
     session = new SessionStore(`test/cron-${randomUUID()}`)
     connectorCenter = new ConnectorCenter()
 
-    listener = createCronListener({
+    cronListener = createCronListener({
       connectorCenter,
-      eventLog,
       agentCenter: mockEngine as any,
+      registry,
       session,
     })
+    await cronListener.start()
+    await registry.start()
   })
 
   afterEach(async () => {
-    listener.stop()
+    await registry.stop()
     await eventLog._resetForTest()
   })
 
@@ -65,8 +70,6 @@ describe('cron listener', () => {
 
   describe('event handling', () => {
     it('should call engine.askWithSession on cron.fire', async () => {
-      listener.start()
-
       await eventLog.append('cron.fire', {
         jobId: 'abc12345',
         jobName: 'test-job',
@@ -86,8 +89,6 @@ describe('cron listener', () => {
     })
 
     it('should write cron.done event on success', async () => {
-      listener.start()
-
       await eventLog.append('cron.fire', {
         jobId: 'abc12345',
         jobName: 'test-job',
@@ -109,8 +110,6 @@ describe('cron listener', () => {
     })
 
     it('should not react to other event types', async () => {
-      listener.start()
-
       await eventLog.append('some.other.event', { data: 'hello' })
 
       // Give it a moment
@@ -131,8 +130,6 @@ describe('cron listener', () => {
         capabilities: { push: true, media: false },
         send: async (payload) => { delivered.push(payload.text); return { delivered: true } },
       })
-
-      listener.start()
 
       await eventLog.append('cron.fire', {
         jobId: 'abc12345',
@@ -155,8 +152,6 @@ describe('cron listener', () => {
         send: async () => { throw new Error('send failed') },
       })
 
-      listener.start()
-
       await eventLog.append('cron.fire', {
         jobId: 'abc12345',
         jobName: 'test-job',
@@ -172,8 +167,6 @@ describe('cron listener', () => {
 
     it('should handle no connectors gracefully', async () => {
       // No connectors registered
-      listener.start()
-
       await eventLog.append('cron.fire', {
         jobId: 'abc12345',
         jobName: 'test-job',
@@ -193,7 +186,6 @@ describe('cron listener', () => {
   describe('error handling', () => {
     it('should write cron.error on engine failure', async () => {
       mockEngine.setShouldFail(true)
-      listener.start()
 
       await eventLog.append('cron.fire', {
         jobId: 'abc12345',
@@ -219,9 +211,8 @@ describe('cron listener', () => {
   // ==================== Lifecycle ====================
 
   describe('lifecycle', () => {
-    it('should stop receiving events after stop()', async () => {
-      listener.start()
-      listener.stop()
+    it('should stop receiving events after registry.stop()', async () => {
+      await registry.stop()
 
       await eventLog.append('cron.fire', {
         jobId: 'abc12345',
@@ -235,11 +226,8 @@ describe('cron listener', () => {
       expect(mockEngine.askWithSession).not.toHaveBeenCalled()
     })
 
-    it('should be idempotent (start twice, stop twice)', () => {
-      listener.start()
-      listener.start()
-      listener.stop()
-      listener.stop()
+    it('should be idempotent on repeated start()', async () => {
+      await cronListener.start()  // second call — should be a no-op
       // No error
     })
   })

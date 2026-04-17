@@ -14,6 +14,8 @@ import type { EventLog } from './event-log.js'
 import type { MediaAttachment } from './types.js'
 import type { StreamableResult } from './ai-provider-manager.js'
 import type { Connector, SendPayload, SendResult } from '../connectors/types.js'
+import type { Listener } from './listener.js'
+import type { ListenerRegistry } from './listener-registry.js'
 
 export type { Connector, SendPayload, SendResult, ConnectorCapabilities } from '../connectors/types.js'
 
@@ -42,11 +44,24 @@ export interface LastInteraction {
 
 // ==================== ConnectorCenter ====================
 
+export interface ConnectorCenterOpts {
+  eventLog?: EventLog
+  listenerRegistry?: ListenerRegistry
+}
+
 export class ConnectorCenter {
   private connectors = new Map<string, Connector>()
   private lastInteraction: LastInteraction | null = null
 
-  constructor(eventLog?: EventLog) {
+  constructor(opts?: ConnectorCenterOpts | EventLog) {
+    // Backward-compat: accept bare EventLog for tests that pre-date the options shape
+    const resolved: ConnectorCenterOpts =
+      opts && typeof (opts as EventLog).subscribeType === 'function'
+        ? { eventLog: opts as EventLog }
+        : (opts as ConnectorCenterOpts | undefined) ?? {}
+
+    const { eventLog, listenerRegistry } = resolved
+
     // Restore last interaction from event log buffer (survives restart)
     if (eventLog) {
       const recent = eventLog.recent({ type: 'message.received' })
@@ -57,11 +72,17 @@ export class ConnectorCenter {
       }
     }
 
-    // Subscribe to future interactions
-    eventLog?.subscribeType('message.received', (entry) => {
-      const { channel, to } = entry.payload
-      this.touch(channel, to)
-    })
+    // Register interaction-tracking listener with the registry
+    if (listenerRegistry) {
+      const listener: Listener<'message.received'> = {
+        name: 'connector-interaction-tracker',
+        eventType: 'message.received',
+        handle: async (entry) => {
+          this.touch(entry.payload.channel, entry.payload.to)
+        },
+      }
+      listenerRegistry.register(listener)
+    }
   }
 
   /** Register a Connector instance. Replaces any existing registration for this channel. */

@@ -8,6 +8,7 @@ import {
   type SendPayload,
 } from './connector-center.js'
 import { createEventLog, type EventLog } from './event-log.js'
+import { createListenerRegistry } from './listener-registry.js'
 
 function makeConnector(overrides: Partial<Connector> = {}): Connector {
   return {
@@ -235,14 +236,18 @@ describe('ConnectorCenter', () => {
   describe('with EventLog', () => {
     let cc: ConnectorCenter
     let eventLog: EventLog
+    let listenerRegistry: ReturnType<typeof createListenerRegistry>
 
     beforeEach(async () => {
       const logPath = join(tmpdir(), `cc-test-${randomUUID()}.jsonl`)
       eventLog = await createEventLog({ logPath })
-      cc = new ConnectorCenter(eventLog)
+      listenerRegistry = createListenerRegistry(eventLog)
+      await listenerRegistry.start()
+      cc = new ConnectorCenter({ eventLog, listenerRegistry })
     })
 
     afterEach(async () => {
+      await listenerRegistry.stop()
       await eventLog._resetForTest()
     })
 
