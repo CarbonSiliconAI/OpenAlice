@@ -7,55 +7,117 @@
  * via `stop()`.
  *
  * On subscription, the registry wraps the EventLog into a `ListenerContext`
- * whose `emit()` is constrained to the listener's declared `emits`. This
- * both enforces the declaration at runtime and auto-populates `causedBy`
- * with the currently-handled event's seq.
+ * whose `emit()` is constrained to the listener's declared `emits`. The
+ * context also exposes the normalized `subscribes` / `emits` arrays so the
+ * handler knows what can trigger it and what it can emit.
  *
  * Errors thrown inside a listener's `handle()` are caught and logged —
  * they do not affect other listeners.
  */
 
 import type { AgentEventMap } from './agent-event.js'
+import { AgentEventSchemas } from './agent-event.js'
 import type { AppendOpts, EventLog, EventLogEntry } from './event-log.js'
-import type { Listener, ListenerContext } from './listener.js'
+import type {
+  EntryFor,
+  EventTypeSet,
+  Listener,
+  ListenerContext,
+} from './listener.js'
+import type {
+  ProducerDecl,
+  ProducerHandle,
+  ProducerInfo,
+} from './producer.js'
+
+// ==================== Types ====================
 
 export interface ListenerInfo {
   name: string
-  eventType: string
+  subscribes: ReadonlyArray<string>
   emits: ReadonlyArray<string>
+  /** True if subscribes was declared as the wildcard '*' (UI can render an aura instead of N edges). */
+  subscribesWildcard: boolean
+  /** True if emits was declared as the wildcard '*'. */
+  emitsWildcard: boolean
 }
 
 export interface ListenerRegistry {
-  /** Register a listener. Throws if the name is already taken. */
-  register<K extends keyof AgentEventMap, E extends readonly (keyof AgentEventMap)[]>(
-    listener: Listener<K, E>,
-  ): void
+  /** Register a listener. Throws if the name collides with any listener or producer. */
+  register<
+    Sub extends EventTypeSet,
+    Emit extends EventTypeSet | undefined,
+  >(listener: Listener<Sub, Emit>): void
   /** Unregister a listener by name. Unsubscribes it if the registry is started. No-op if not found. */
   unregister(name: string): void
+  /** Declare a producer (pure event source). Throws on name collision with any
+   *  listener or existing producer. Returns a constrained, validated emit handle.
+   *  The producer is visible in introspection immediately. */
+  declareProducer<Emit extends EventTypeSet>(
+    decl: ProducerDecl<Emit>,
+  ): ProducerHandle<Emit>
   /** Activate all registered listeners (subscribe to EventLog). */
   start(): Promise<void>
-  /** Deactivate all listeners (unsubscribe). */
+  /** Deactivate all listeners (unsubscribe). Does not remove declarations. */
   stop(): Promise<void>
-  /** Introspection — registered listener names, event types, emits. */
+  /** Introspection — registered listener names, subscribes, emits. */
   list(): ReadonlyArray<ListenerInfo>
+  /** Introspection — declared producer names + emit sets. */
+  listProducers(): ReadonlyArray<ProducerInfo>
 }
+
+// ==================== Helpers ====================
+
+const ALL_EVENT_TYPES: ReadonlyArray<keyof AgentEventMap> =
+  Object.keys(AgentEventSchemas) as ReadonlyArray<keyof AgentEventMap>
+
+function normalizeToArray(
+  set: EventTypeSet | undefined,
+): ReadonlyArray<keyof AgentEventMap> {
+  if (set === undefined) return []
+  if (set === '*') return ALL_EVENT_TYPES
+  if (Array.isArray(set)) return set as ReadonlyArray<keyof AgentEventMap>
+  return [set as keyof AgentEventMap]
+}
+
+// ==================== Implementation ====================
 
 export function createListenerRegistry(eventLog: EventLog): ListenerRegistry {
   // Storage is necessarily wide-typed (union across all event types).
-  // Per-call type precision is preserved via the generic `register<K, E>` signature.
-  type AnyListener = Listener<keyof AgentEventMap, readonly (keyof AgentEventMap)[]>
+  // Per-call type precision is preserved via the generic `register` signature.
+  type AnyListener = Listener<EventTypeSet, EventTypeSet | undefined>
   const listeners = new Map<string, AnyListener>()
-  const unsubscribes = new Map<string, () => void>()
+  // Per listener we may have 1..N subscriptions (multi-sub / wildcard)
+  const unsubscribes = new Map<string, Array<() => void>>()
+  // Producers share the same name space as listeners — a name cannot be both.
+  type InternalProducerDecl = {
+    name: string
+    emits: EventTypeSet
+    emitsWildcard: boolean
+    emitsNormalized: ReadonlyArray<keyof AgentEventMap>
+  }
+  const producers = new Map<string, InternalProducerDecl>()
   let started = false
 
-  function register<K extends keyof AgentEventMap, E extends readonly (keyof AgentEventMap)[]>(
-    listener: Listener<K, E>,
-  ): void {
-    if (listeners.has(listener.name)) {
-      throw new Error(`ListenerRegistry: listener "${listener.name}" already registered`)
+  function assertNameFree(name: string, kind: 'listener' | 'producer'): void {
+    if (listeners.has(name)) {
+      throw new Error(
+        `ListenerRegistry: ${kind} "${name}" already registered as a listener`,
+      )
     }
+    if (producers.has(name)) {
+      throw new Error(
+        `ListenerRegistry: ${kind} "${name}" already registered as a producer`,
+      )
+    }
+  }
+
+  function register<
+    Sub extends EventTypeSet,
+    Emit extends EventTypeSet | undefined,
+  >(listener: Listener<Sub, Emit>): void {
+    assertNameFree(listener.name, 'listener')
     listeners.set(listener.name, listener as unknown as AnyListener)
-    // If registry is already running, subscribe immediately
     if (started) {
       subscribeOne(listener as unknown as AnyListener)
     }
@@ -64,24 +126,46 @@ export function createListenerRegistry(eventLog: EventLog): ListenerRegistry {
   function buildContext(
     listener: AnyListener,
     parentEntry: EventLogEntry,
-  ): ListenerContext<readonly (keyof AgentEventMap)[]> {
-    const declared = new Set<string>(listener.emits ?? [])
+  ): ListenerContext<EventTypeSet | undefined> {
+    const subscribes = normalizeToArray(listener.subscribes)
+    const emits = normalizeToArray(listener.emits)
+    const emitIsWildcard = listener.emits === '*'
+    const emitAllowed = emitIsWildcard ? null : new Set<string>(emits)
 
-    return {
-      async emit(type, payload, opts?: AppendOpts) {
-        if (!declared.has(type as string)) {
-          const declaredList = [...declared].join(', ') || '(none)'
+    const emitFn = async (type: string, payload: unknown, opts?: AppendOpts) => {
+      // Wildcard: anything in AgentEventSchemas is OK.
+      // Closed set: must be in declared emits.
+      if (emitIsWildcard) {
+        if (!(type in AgentEventSchemas)) {
           throw new Error(
-            `Listener '${listener.name}' tried to emit '${type as string}' but declared emits: ${declaredList}`,
+            `Listener '${listener.name}' tried to emit unregistered type '${type}'`,
           )
         }
-        // Auto-set causedBy unless caller explicitly provided one
-        const mergedOpts: AppendOpts = {
-          ...opts,
-          causedBy: opts?.causedBy ?? parentEntry.seq,
+      } else {
+        if (!emitAllowed!.has(type)) {
+          const declared = [...emitAllowed!].join(', ') || '(none)'
+          throw new Error(
+            `Listener '${listener.name}' tried to emit '${type}' but declared emits: ${declared}`,
+          )
         }
-        return eventLog.append(type as keyof AgentEventMap, payload as never, mergedOpts) as never
-      },
+      }
+      const mergedOpts: AppendOpts = {
+        ...opts,
+        causedBy: opts?.causedBy ?? parentEntry.seq,
+      }
+      return eventLog.append(
+        type as keyof AgentEventMap,
+        payload as never,
+        mergedOpts,
+      )
+    }
+
+    return {
+      subscribes,
+      emits,
+      // The registry's runtime emit is necessarily wide-typed; per-listener
+      // precision lives in the declaration (via EmitSignature<Emit>).
+      emit: emitFn as never,
       events: {
         read: eventLog.read,
         recent: eventLog.recent,
@@ -92,27 +176,99 @@ export function createListenerRegistry(eventLog: EventLog): ListenerRegistry {
   }
 
   function subscribeOne(listener: AnyListener): void {
-    const unsub = eventLog.subscribeType(listener.eventType, (entry) => {
+    const subs = listener.subscribes
+    const unsubs: Array<() => void> = []
+
+    const dispatch = (entry: EventLogEntry) => {
       const ctx = buildContext(listener, entry)
-      // Fire-and-forget with error isolation
       Promise.resolve()
-        .then(() => listener.handle(entry, ctx))
+        .then(() =>
+          listener.handle(entry as EntryFor<EventTypeSet>, ctx),
+        )
         .catch((err) => {
           console.error(`listener[${listener.name}]: unhandled error:`, err)
         })
-    })
-    unsubscribes.set(listener.name, unsub)
+    }
+
+    if (subs === '*') {
+      // Full stream, but filter out unregistered event types so handlers
+      // can safely assume entry.type is in AgentEventMap.
+      const unsub = eventLog.subscribe((entry) => {
+        if (entry.type in AgentEventSchemas) dispatch(entry)
+      })
+      unsubs.push(unsub)
+    } else if (Array.isArray(subs)) {
+      for (const type of subs) {
+        unsubs.push(eventLog.subscribeType(type as keyof AgentEventMap, dispatch))
+      }
+    } else {
+      unsubs.push(
+        eventLog.subscribeType(subs as keyof AgentEventMap, dispatch),
+      )
+    }
+
+    unsubscribes.set(listener.name, unsubs)
   }
 
   function unregister(name: string): void {
     const existing = listeners.get(name)
     if (!existing) return
     listeners.delete(name)
-    const unsub = unsubscribes.get(name)
-    if (unsub) {
-      try { unsub() } catch { /* swallow */ }
+    const unsubs = unsubscribes.get(name)
+    if (unsubs) {
+      for (const u of unsubs) {
+        try { u() } catch { /* swallow */ }
+      }
       unsubscribes.delete(name)
     }
+  }
+
+  function declareProducer<Emit extends EventTypeSet>(
+    decl: ProducerDecl<Emit>,
+  ): ProducerHandle<Emit> {
+    assertNameFree(decl.name, 'producer')
+    const emitsWildcard = decl.emits === '*'
+    const emitsNormalized = normalizeToArray(decl.emits as EventTypeSet)
+    const emitAllowed = emitsWildcard ? null : new Set<string>(emitsNormalized)
+
+    const emitFn = async (type: string, payload: unknown, opts?: AppendOpts) => {
+      if (emitsWildcard) {
+        if (!(type in AgentEventSchemas)) {
+          throw new Error(
+            `Producer '${decl.name}' tried to emit unregistered type '${type}'`,
+          )
+        }
+      } else {
+        if (!emitAllowed!.has(type)) {
+          const declared = [...emitAllowed!].join(', ') || '(none)'
+          throw new Error(
+            `Producer '${decl.name}' tried to emit '${type}' but declared emits: ${declared}`,
+          )
+        }
+      }
+      return eventLog.append(
+        type as keyof AgentEventMap,
+        payload as never,
+        opts,
+      )
+    }
+
+    producers.set(decl.name, {
+      name: decl.name,
+      emits: decl.emits,
+      emitsWildcard,
+      emitsNormalized,
+    })
+
+    const handle: ProducerHandle<Emit> = {
+      name: decl.name,
+      emits: emitsNormalized,
+      emit: emitFn as never,
+      dispose() {
+        producers.delete(decl.name)
+      },
+    }
+    return handle
   }
 
   async function start(): Promise<void> {
@@ -126,8 +282,10 @@ export function createListenerRegistry(eventLog: EventLog): ListenerRegistry {
   async function stop(): Promise<void> {
     if (!started) return
     started = false
-    for (const unsub of unsubscribes.values()) {
-      try { unsub() } catch { /* swallow */ }
+    for (const unsubs of unsubscribes.values()) {
+      for (const u of unsubs) {
+        try { u() } catch { /* swallow */ }
+      }
     }
     unsubscribes.clear()
   }
@@ -135,10 +293,20 @@ export function createListenerRegistry(eventLog: EventLog): ListenerRegistry {
   function list(): ReadonlyArray<ListenerInfo> {
     return Array.from(listeners.values()).map((l) => ({
       name: l.name,
-      eventType: l.eventType,
-      emits: [...(l.emits ?? [])],
+      subscribes: [...normalizeToArray(l.subscribes)],
+      emits: [...normalizeToArray(l.emits)],
+      subscribesWildcard: l.subscribes === '*',
+      emitsWildcard: l.emits === '*',
     }))
   }
 
-  return { register, unregister, start, stop, list }
+  function listProducers(): ReadonlyArray<ProducerInfo> {
+    return Array.from(producers.values()).map((p) => ({
+      name: p.name,
+      emits: [...p.emitsNormalized],
+      emitsWildcard: p.emitsWildcard,
+    }))
+  }
+
+  return { register, unregister, declareProducer, start, stop, list, listProducers }
 }

@@ -126,14 +126,31 @@ export interface ConnectorsConfig {
 
 // ==================== Topology ====================
 
+export interface TopologyEventType {
+  name: string
+  external: boolean
+  description?: string
+}
+
 export interface TopologyListener {
   name: string
-  eventType: string
+  subscribes: string[]
   emits: string[]
+  /** True if declared as wildcard '*' — UI renders an aura instead of N edges. */
+  subscribesWildcard: boolean
+  /** Same for emits. */
+  emitsWildcard: boolean
+}
+
+export interface TopologyProducer {
+  name: string
+  emits: string[]
+  emitsWildcard: boolean
 }
 
 export interface TopologyResponse {
-  eventTypes: string[]
+  eventTypes: TopologyEventType[]
+  producers: TopologyProducer[]
   listeners: TopologyListener[]
 }
 
@@ -144,6 +161,8 @@ export interface NewsCollectorFeed {
   url: string
   source: string
   categories?: string[]
+  description?: string
+  enabled?: boolean
 }
 
 export interface NewsCollectorConfig {

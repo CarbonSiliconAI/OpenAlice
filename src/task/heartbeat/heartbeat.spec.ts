@@ -68,7 +68,7 @@ describe('heartbeat', () => {
     eventLog = await createEventLog({ logPath })
     listenerRegistry = createListenerRegistry(eventLog)
     await listenerRegistry.start()  // Start registry so late registrations subscribe immediately
-    cronEngine = createCronEngine({ eventLog, storePath })
+    cronEngine = createCronEngine({ registry: listenerRegistry, storePath })
     await cronEngine.start()
 
     mockEngine = createMockEngine()

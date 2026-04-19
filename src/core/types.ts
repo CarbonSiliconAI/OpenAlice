@@ -12,6 +12,7 @@ import type { EventLog } from './event-log.js'
 import type { ToolCallLog } from './tool-call-log.js'
 import type { ToolCenter } from './tool-center.js'
 import type { ListenerRegistry } from './listener-registry.js'
+import type { EventBus } from './event-bus.js'
 
 export type { Config, WebChannel }
 
@@ -37,6 +38,9 @@ export interface EngineContext {
   cronEngine: CronEngine
   toolCenter: ToolCenter
   listenerRegistry: ListenerRegistry
+  /** Ergonomic in-process producer facade. Use this to fire events from
+   *  plugins / hacks / extension code instead of plumbing eventLog. */
+  fire: EventBus
 
   // Market data
   bbEngine: QueryExecutor

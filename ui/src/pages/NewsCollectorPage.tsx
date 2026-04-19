@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { type AppConfig, type NewsCollectorConfig, type NewsCollectorFeed } from '../api'
 import { SaveIndicator } from '../components/SaveIndicator'
 import { ConfigSection, Field, inputClass } from '../components/form'
@@ -85,15 +85,30 @@ function FeedsSection({
   const [newName, setNewName] = useState('')
   const [newUrl, setNewUrl] = useState('')
   const [newSource, setNewSource] = useState('')
+  const [newDescription, setNewDescription] = useState('')
+
+  const activeCount = useMemo(() => feeds.filter((f) => f.enabled !== false).length, [feeds])
 
   const removeFeed = (index: number) => onChange(feeds.filter((_, i) => i !== index))
 
+  const setEnabled = (index: number, enabled: boolean) => {
+    onChange(feeds.map((f, i) => (i === index ? { ...f, enabled } : f)))
+  }
+
   const addFeed = () => {
     if (!newName.trim() || !newUrl.trim() || !newSource.trim()) return
-    onChange([...feeds, { name: newName.trim(), url: newUrl.trim(), source: newSource.trim() }])
+    const entry: NewsCollectorFeed = {
+      name: newName.trim(),
+      url: newUrl.trim(),
+      source: newSource.trim(),
+      enabled: true,
+    }
+    if (newDescription.trim()) entry.description = newDescription.trim()
+    onChange([...feeds, entry])
     setNewName('')
     setNewUrl('')
     setNewSource('')
+    setNewDescription('')
   }
 
   return (
@@ -101,35 +116,51 @@ function FeedsSection({
       title="RSS Feeds"
       description={
         feeds.length > 0
-          ? `${feeds.length} feed${feeds.length > 1 ? 's' : ''} configured. Articles are searchable via globNews, grepNews, and readNews tools.`
+          ? `${activeCount} of ${feeds.length} feed${feeds.length > 1 ? 's' : ''} active. Toggle off to pause fetching without removing. Articles are searchable via globNews, grepNews, and readNews tools.`
           : 'No feeds configured yet. Add feeds to start collecting articles.'
       }
     >
       {/* Existing feeds */}
       {feeds.length > 0 && (
         <div className="space-y-2 mb-4">
-          {feeds.map((feed, i) => (
-            <div
-              key={`${feed.source}-${i}`}
-              className="flex items-center gap-3 border border-border/60 rounded-lg px-3 py-2.5"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="text-[13px] font-medium text-text truncate">{feed.name}</p>
-                <p className="text-[12px] text-text-muted truncate">{feed.url}</p>
-                <p className="text-[11px] text-text-muted/50 mt-0.5">source: {feed.source}</p>
-              </div>
-              <button
-                onClick={() => removeFeed(i)}
-                className="shrink-0 text-text-muted hover:text-red transition-colors p-1"
-                title="Remove feed"
+          {feeds.map((feed, i) => {
+            const isEnabled = feed.enabled !== false
+            return (
+              <div
+                key={`${feed.source}-${i}`}
+                className={`flex items-center gap-3 border border-border/60 rounded-lg px-3 py-2.5 ${isEnabled ? '' : 'opacity-50'}`}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-          ))}
+                <Toggle
+                  size="sm"
+                  checked={isEnabled}
+                  onChange={(v) => setEnabled(i, v)}
+                />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] font-medium text-text truncate">{feed.name}</p>
+                  {feed.description && (
+                    <p className="text-[12px] text-text-muted/80 truncate">{feed.description}</p>
+                  )}
+                  <p className="text-[11px] text-text-muted/60 truncate mt-0.5">{feed.url}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[11px] text-text-muted/50">source: {feed.source}</span>
+                    {feed.categories && feed.categories.length > 0 && (
+                      <span className="text-[11px] text-text-muted/50">• {feed.categories.join(', ')}</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => removeFeed(i)}
+                  className="shrink-0 text-text-muted hover:text-red transition-colors p-1"
+                  title="Remove feed"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -146,6 +177,9 @@ function FeedsSection({
         </div>
         <Field label="Feed URL">
           <input className={inputClass} value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="https://example.com/rss.xml" />
+        </Field>
+        <Field label="Description (optional)">
+          <input className={inputClass} value={newDescription} onChange={(e) => setNewDescription(e.target.value)} placeholder="Short description shown in the feed list" />
         </Field>
         <button
           onClick={addFeed}

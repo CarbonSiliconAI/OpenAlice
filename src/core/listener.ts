@@ -1,36 +1,98 @@
 /**
- * Listener — standard interface for subscribing to AgentEvent types.
+ * Listener — a "pointer" on the event tape.
  *
- * A Listener represents a single handler for one event type. Filtering,
- * serial locks, and internal state are the listener's own responsibility —
- * the registry only manages subscription lifecycle and error isolation.
+ * Each listener declares what set of event types can trigger it (`subscribes`)
+ * and what set of event types it may emit (`emits`). Both sides share the
+ * same grammar — a single type, an enumerated tuple, or the wildcard '*' —
+ * which keeps input/output symmetric.
  *
- * Listeners declare what event types they emit via the `emits` field. The
- * Registry passes a `ListenerContext` into `handle()` whose `emit()` method
- * is constrained (compile + runtime) to the declared set. This keeps emit
- * declarations load-bearing — if a listener tries to emit an undeclared
- * type, it fails.
+ * The Registry passes a `ListenerContext` into `handle()` that:
+ *   - exposes the normalized subscribes/emits arrays (introspection)
+ *   - provides a type-constrained `emit()` action
+ *   - exposes read-only event history via `events`
+ *
+ * The entry parameter is a discriminated union on `type`, so handlers can
+ * `switch (entry.type)` and get precise payload narrowing.
  */
 
 import type { AgentEventMap } from './agent-event.js'
 import type { AppendOpts, EventLog, EventLogEntry } from './event-log.js'
 
-/** Handle-time context passed to a listener. Wraps the EventLog with
- *  a constrained emitter and read-only history access. */
-export interface ListenerContext<
-  Emits extends readonly (keyof AgentEventMap)[] = readonly (keyof AgentEventMap)[],
-> {
-  /**
-   * Emit a child event. The `type` must be in this listener's declared `emits`.
-   * `causedBy` defaults to the currently-handled event's seq (override via opts).
-   */
-  emit<E extends Emits[number]>(
-    type: E,
-    payload: AgentEventMap[E],
-    opts?: AppendOpts,
-  ): Promise<EventLogEntry<AgentEventMap[E]>>
+// ==================== EventTypeSet grammar ====================
 
-  /** Read-only access to the event log (history queries). */
+/** The shape used for both `subscribes` and `emits`. */
+export type EventTypeSet<T extends keyof AgentEventMap = keyof AgentEventMap> =
+  | T
+  | readonly T[]
+  | '*'
+
+// ==================== Entry typing (discriminated union) ====================
+
+/** A fully-typed event log entry for a specific event type. `type` is the
+ *  literal key (not raw string), enabling discriminated-union narrowing. */
+export type TypedEntry<K extends keyof AgentEventMap> = {
+  seq: number
+  ts: number
+  type: K
+  payload: AgentEventMap[K]
+  causedBy?: number
+}
+
+/** Resolves the entry type a listener receives based on its `subscribes`. */
+export type EntryFor<Sub> =
+  Sub extends keyof AgentEventMap
+    ? TypedEntry<Sub>
+    : Sub extends readonly (infer T)[]
+      ? T extends keyof AgentEventMap ? TypedEntry<T> : never
+      : Sub extends '*'
+        ? TypedEntry<keyof AgentEventMap>
+        : never
+
+// ==================== Emit signature (constrained by `emits`) ====================
+
+/** Expands a declared emit set into the ctx.emit signature.
+ *  Wrapped in `[...]` to prevent distribution over unions — we want
+ *  a single function signature, not a union of them. */
+export type EmitSignature<Emit> =
+  [Emit] extends [keyof AgentEventMap]
+    ? (
+        type: Emit,
+        payload: AgentEventMap[Emit & keyof AgentEventMap],
+        opts?: AppendOpts,
+      ) => Promise<EventLogEntry<AgentEventMap[Emit & keyof AgentEventMap]>>
+    : Emit extends readonly (infer T)[]
+      ? [T] extends [keyof AgentEventMap]
+        ? <E extends T & keyof AgentEventMap>(
+            type: E,
+            payload: AgentEventMap[E],
+            opts?: AppendOpts,
+          ) => Promise<EventLogEntry<AgentEventMap[E]>>
+        : never
+      : [Emit] extends ['*']
+        ? <E extends keyof AgentEventMap>(
+            type: E,
+            payload: AgentEventMap[E],
+            opts?: AppendOpts,
+          ) => Promise<EventLogEntry<AgentEventMap[E]>>
+        : [Emit] extends [undefined]
+          ? (type: never, payload: never, opts?: AppendOpts) => Promise<never>
+          : never
+
+// ==================== ListenerContext ====================
+
+export interface ListenerContext<
+  Emit extends EventTypeSet | undefined = EventTypeSet | undefined,
+> {
+  /** Normalized subscribes set — always a readonly array. */
+  readonly subscribes: ReadonlyArray<keyof AgentEventMap>
+
+  /** Normalized emits set — always a readonly array (empty if listener emits nothing). */
+  readonly emits: ReadonlyArray<keyof AgentEventMap>
+
+  /** Type-constrained emitter. `causedBy` defaults to the currently-handled entry's seq. */
+  emit: EmitSignature<Emit>
+
+  /** Read-only access to the event log. */
   readonly events: {
     read: EventLog['read']
     recent: EventLog['recent']
@@ -39,19 +101,21 @@ export interface ListenerContext<
   }
 }
 
+// ==================== Listener ====================
+
 export interface Listener<
-  K extends keyof AgentEventMap = keyof AgentEventMap,
-  Emits extends readonly (keyof AgentEventMap)[] = readonly (keyof AgentEventMap)[],
+  Sub extends EventTypeSet = EventTypeSet,
+  Emit extends EventTypeSet | undefined = EventTypeSet | undefined,
 > {
   /** Unique name for identification (registry key, future UI display). */
   name: string
-  /** Event type this listener subscribes to. */
-  eventType: K
-  /** Event types this listener may emit. Omitted = emits nothing. */
-  emits?: Emits
+  /** Event types that can trigger this listener. */
+  subscribes: Sub
+  /** Event types this listener may emit. Omit = emits nothing. */
+  emits?: Emit
   /** Called when a matching event is appended. */
   handle(
-    entry: EventLogEntry<AgentEventMap[K]>,
-    ctx: ListenerContext<Emits>,
+    entry: EntryFor<Sub>,
+    ctx: ListenerContext<Emit>,
   ): Promise<void>
 }

@@ -30,6 +30,10 @@ export interface RSSFeedConfig {
   source: string
   /** Optional category tags */
   categories?: string[]
+  /** Short human-readable description — shown in the UI to help users pick. */
+  description?: string
+  /** Whether this feed is actively fetched. Defaults to true when absent. */
+  enabled?: boolean
 }
 
 /** Discriminator for how a news item was ingested */

@@ -48,12 +48,14 @@ export class NewsCollector {
     }
   }
 
-  /** Fetch all configured feeds once. Returns counts. */
+  /** Fetch all active feeds once. Disabled feeds are skipped. Returns counts. */
   async fetchAll(): Promise<{ total: number; new: number }> {
     let totalItems = 0
     let totalNew = 0
 
-    for (const feed of this.feeds) {
+    const activeFeeds = this.feeds.filter((f) => f.enabled !== false)
+
+    for (const feed of activeFeeds) {
       try {
         const { fetched, ingested } = await this.fetchFeed(feed)
         totalItems += fetched
@@ -67,7 +69,7 @@ export class NewsCollector {
 
     if (totalNew > 0) {
       console.log(
-        `news-collector: fetched ${totalItems} items from ${this.feeds.length} feeds, ${totalNew} new`,
+        `news-collector: fetched ${totalItems} items from ${activeFeeds.length} active feeds, ${totalNew} new`,
       )
     }
 

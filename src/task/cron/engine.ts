@@ -15,7 +15,8 @@
 import { readFile, writeFile, rename, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { EventLog } from '../../core/event-log.js'
+import type { ListenerRegistry } from '../../core/listener-registry.js'
+import type { ProducerHandle } from '../../core/producer.js'
 
 // ==================== Types ====================
 
@@ -77,16 +78,24 @@ export interface CronEngine {
 }
 
 export interface CronEngineOpts {
-  eventLog: EventLog
+  /** Listener registry — used to declare the `cron-engine` producer. */
+  registry: ListenerRegistry
   storePath?: string
   /** Inject clock for testing. */
   now?: () => number
 }
 
+const CRON_EMITS = ['cron.fire'] as const
+type CronEmits = typeof CRON_EMITS
+const PRODUCER_NAME = 'cron-engine'
+
 // ==================== Factory ====================
 
 export function createCronEngine(opts: CronEngineOpts): CronEngine {
-  const { eventLog } = opts
+  const producer: ProducerHandle<CronEmits> = opts.registry.declareProducer({
+    name: PRODUCER_NAME,
+    emits: CRON_EMITS,
+  })
   const storePath = opts.storePath ?? 'data/cron/jobs.json'
   const now = opts.now ?? Date.now
 
@@ -161,7 +170,7 @@ export function createCronEngine(opts: CronEngineOpts): CronEngine {
     job.state.lastRunAtMs = currentMs
 
     try {
-      await eventLog.append('cron.fire', {
+      await producer.emit('cron.fire', {
         jobId: job.id,
         jobName: job.name,
         payload: job.payload,
@@ -210,6 +219,7 @@ export function createCronEngine(opts: CronEngineOpts): CronEngine {
     stop() {
       stopped = true
       if (timer) { clearTimeout(timer); timer = null }
+      producer.dispose()
     },
 
     async add(params) {

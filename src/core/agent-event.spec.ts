@@ -9,7 +9,7 @@ describe('AgentEventSchemas', () => {
     'cron.fire', 'cron.done', 'cron.error',
     'heartbeat.done', 'heartbeat.skip', 'heartbeat.error',
     'message.received', 'message.sent',
-    'trigger', 'trigger.done', 'trigger.error',
+    'task.requested', 'task.done', 'task.error',
   ]
 
   it('should have a schema for every key in AgentEventMap', () => {
@@ -113,42 +113,26 @@ describe('validateEventPayload', () => {
     })).toThrow(/Invalid payload.*message\.sent/)
   })
 
-  // -- trigger --
-  it('should accept valid trigger payload', () => {
-    expect(() => validateEventPayload('trigger', {
-      source: 'webhook', name: 'price-alert', data: { symbol: 'BTC', price: 100000 },
+  // -- task.* --
+  it('should accept valid task.requested payload', () => {
+    expect(() => validateEventPayload('task.requested', {
+      prompt: 'check overnight moves',
     })).not.toThrow()
   })
 
-  it('should accept trigger with empty data', () => {
-    expect(() => validateEventPayload('trigger', {
-      source: 'api', name: 'test', data: {},
+  it('should reject task.requested without prompt', () => {
+    expect(() => validateEventPayload('task.requested', {})).toThrow(/Invalid payload.*task\.requested/)
+  })
+
+  it('should accept valid task.done payload', () => {
+    expect(() => validateEventPayload('task.done', {
+      prompt: 'hi', reply: 'ok', durationMs: 120,
     })).not.toThrow()
   })
 
-  it('should reject trigger with missing source', () => {
-    expect(() => validateEventPayload('trigger', {
-      name: 'test', data: {},
-    })).toThrow(/Invalid payload.*trigger/)
-  })
-
-  // -- trigger.done --
-  it('should accept valid trigger.done payload', () => {
-    expect(() => validateEventPayload('trigger.done', {
-      source: 'webhook', name: 'ping', reply: 'ok', durationMs: 300,
-    })).not.toThrow()
-  })
-
-  it('should reject trigger.done with missing reply', () => {
-    expect(() => validateEventPayload('trigger.done', {
-      source: 'webhook', name: 'ping', durationMs: 300,
-    })).toThrow(/Invalid payload.*trigger\.done/)
-  })
-
-  // -- trigger.error --
-  it('should accept valid trigger.error payload', () => {
-    expect(() => validateEventPayload('trigger.error', {
-      source: 'webhook', name: 'ping', error: 'boom', durationMs: 50,
+  it('should accept valid task.error payload', () => {
+    expect(() => validateEventPayload('task.error', {
+      prompt: 'hi', error: 'boom', durationMs: 50,
     })).not.toThrow()
   })
 

@@ -55,7 +55,7 @@ export function createSnapshotScheduler(deps: {
 
   const listener: Listener<'cron.fire'> = {
     name: 'snapshot',
-    eventType: 'cron.fire',
+    subscribes: 'cron.fire',
     handle: handleFire,
   }
 

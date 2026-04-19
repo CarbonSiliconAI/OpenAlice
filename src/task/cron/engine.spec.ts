@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { unlink } from 'node:fs/promises'
 import { createCronEngine, parseDuration, nextCronFire, computeNextRun } from './engine.js'
 import { createEventLog, type EventLog, type EventLogEntry } from '../../core/event-log.js'
+import { createListenerRegistry, type ListenerRegistry } from '../../core/listener-registry.js'
 import type { CronEngine, CronFirePayload } from './engine.js'
 
 function tempPath(ext: string): string {
@@ -13,6 +14,7 @@ function tempPath(ext: string): string {
 
 describe('cron engine', () => {
   let eventLog: EventLog
+  let registry: ListenerRegistry
   let engine: CronEngine
   let storePath: string
   let logPath: string
@@ -22,9 +24,10 @@ describe('cron engine', () => {
     logPath = tempPath('jsonl')
     storePath = tempPath('json')
     eventLog = await createEventLog({ logPath })
+    registry = createListenerRegistry(eventLog)
     clock = Date.now()
     engine = createCronEngine({
-      eventLog,
+      registry,
       storePath,
       now: () => clock,
     })
@@ -184,7 +187,7 @@ describe('cron engine', () => {
 
       // New engine from same store
       const engine2 = createCronEngine({
-        eventLog,
+        registry,
         storePath,
         now: () => clock,
       })

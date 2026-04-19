@@ -460,7 +460,7 @@ describe('Snapshot Scheduler', () => {
     eventLog = await createEventLog({ logPath })
     listenerRegistry = createListenerRegistry(eventLog)
     await listenerRegistry.start()
-    cronEngine = createCronEngine({ eventLog, storePath })
+    cronEngine = createCronEngine({ registry: listenerRegistry, storePath })
     await cronEngine.start()
 
     mockService = {

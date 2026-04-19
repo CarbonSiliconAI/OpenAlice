@@ -40,9 +40,11 @@ import { CodexProvider } from './ai-providers/codex/index.js'
 import { createEventLog } from './core/event-log.js'
 import { createToolCallLog } from './core/tool-call-log.js'
 import { createListenerRegistry } from './core/listener-registry.js'
+import { createEventBus } from './core/event-bus.js'
 import { createCronEngine, createCronListener, createCronTools } from './task/cron/index.js'
 import { createHeartbeat } from './task/heartbeat/index.js'
-import { createTriggerListener } from './task/trigger/index.js'
+import { createMetricsListener } from './task/metrics/index.js'
+import { createTaskRouter } from './task/task-router/index.js'
 import { NewsCollectorStore, NewsCollector } from './domain/news/index.js'
 import { createNewsArchiveTools } from './tool/news.js'
 
@@ -77,6 +79,11 @@ async function main() {
 
   const eventLog = await createEventLog()
   const toolCallLog = await createToolCallLog()
+
+  // ==================== Listener Registry ====================
+  // Created early so CronEngine and other producers can declare against it.
+
+  const listenerRegistry = createListenerRegistry(eventLog)
 
   // ==================== Tool Center (created early — AccountManager needs it) ====================
 
@@ -146,7 +153,7 @@ async function main() {
 
   // ==================== Cron ====================
 
-  const cronEngine = createCronEngine({ eventLog })
+  const cronEngine = createCronEngine({ registry: listenerRegistry })
 
   // ==================== News Collector Store ====================
 
@@ -248,10 +255,6 @@ async function main() {
     toolCallLog,
   })
 
-  // ==================== Listener Registry ====================
-
-  const listenerRegistry = createListenerRegistry(eventLog)
-
   // ==================== Connector Center ====================
 
   const connectorCenter = new ConnectorCenter({ eventLog, listenerRegistry })
@@ -285,14 +288,15 @@ async function main() {
     console.log(`heartbeat: enabled (every ${config.heartbeat.every})`)
   }
 
-  // ==================== Trigger Listener (external event router) ====================
+  // ==================== Task Router (external `task.requested` handler) ====================
 
-  const triggerSession = new SessionStore('trigger/default')
-  await triggerSession.restore()
-  const triggerListener = createTriggerListener({
-    connectorCenter, agentCenter, registry: listenerRegistry, session: triggerSession,
-  })
-  await triggerListener.start()
+  const taskRouter = createTaskRouter({ connectorCenter, agentCenter, registry: listenerRegistry })
+  await taskRouter.start()
+
+  // ==================== Event Metrics (wildcard observer) ====================
+
+  const metricsListener = createMetricsListener({ registry: listenerRegistry })
+  await metricsListener.start()
 
   // ==================== Activate Listeners + Start Cron Engine ====================
 
@@ -311,7 +315,8 @@ async function main() {
       intervalMs: config.news.intervalMinutes * 60 * 1000,
     })
     newsCollector.start()
-    console.log(`news-collector: started (${config.news.feeds.length} feeds, every ${config.news.intervalMinutes}m)`)
+    const activeCount = config.news.feeds.filter((f) => f.enabled !== false).length
+    console.log(`news-collector: started (${activeCount}/${config.news.feeds.length} feeds active, every ${config.news.intervalMinutes}m)`)
   }
 
   // ==================== Plugins ====================
@@ -430,6 +435,7 @@ async function main() {
   const ctx: EngineContext = {
     config, connectorCenter, agentCenter, eventLog, toolCallLog, heartbeat, cronEngine, toolCenter,
     listenerRegistry,
+    fire: createEventBus(eventLog),
     bbEngine: getSDKExecutor(),
     accountManager, fxService, snapshotService,
     newsProvider: newsStore,
@@ -451,7 +457,7 @@ async function main() {
     newsCollector?.stop()
     snapshotScheduler.stop()
     heartbeat.stop()
-    triggerListener.stop()
+    metricsListener.stop()
     cronListener.stop()
     cronEngine.stop()
     await listenerRegistry.stop()

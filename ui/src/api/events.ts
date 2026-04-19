@@ -41,4 +41,20 @@ export const eventsApi = {
     }
     return es
   },
+
+  async ingest(type: string, payload: unknown, opts?: { token?: string }): Promise<EventLogEntry> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (opts?.token) headers['Authorization'] = `Bearer ${opts.token}`
+    const res = await fetch('/api/events/ingest', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ type, payload }),
+    })
+    const body = await res.json().catch(() => null) as { error?: string } | EventLogEntry | null
+    if (!res.ok) {
+      const msg = body && typeof body === 'object' && 'error' in body ? body.error : `Ingest failed (${res.status})`
+      throw new Error(msg ?? 'Ingest failed')
+    }
+    return body as EventLogEntry
+  },
 }

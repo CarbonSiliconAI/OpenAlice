@@ -6,6 +6,7 @@ import { ConfigSection, Field, inputClass } from '../components/form'
 import { useAutoSave } from '../hooks/useAutoSave'
 import { PageHeader } from '../components/PageHeader'
 import { AutomationFlowSection } from './AutomationFlowSection'
+import { AutomationWebhookSection } from './AutomationWebhookSection'
 
 // ==================== Helpers ====================
 
@@ -597,12 +598,13 @@ function AddCronJobForm({ onClose, onCreated }: { onClose: () => void; onCreated
 
 // ==================== Page ====================
 
-type Tab = 'flow' | 'heartbeat' | 'cron'
+type Tab = 'flow' | 'heartbeat' | 'cron' | 'webhook'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'flow', label: 'Flow' },
   { key: 'heartbeat', label: 'Heartbeat' },
   { key: 'cron', label: 'Cron Jobs' },
+  { key: 'webhook', label: 'Webhook' },
 ]
 
 export function AutomationPage() {
@@ -640,8 +642,10 @@ export function AutomationPage() {
             <AutomationFlowSection />
           ) : tab === 'heartbeat' ? (
             <HeartbeatSection />
-          ) : (
+          ) : tab === 'cron' ? (
             <CronSection />
+          ) : (
+            <AutomationWebhookSection />
           )}
         </div>
       </div>

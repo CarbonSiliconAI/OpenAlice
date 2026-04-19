@@ -268,6 +268,42 @@ body,
 
 /* ==================== Automation Flow (React Flow) ==================== */
 
+/* Producer nodes (leftmost column — pure event sources) */
+.react-flow__node.flow-producer-node {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  border: 1px solid #a371f7;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 180px;
+  text-align: center;
+  box-shadow: 0 0 0 1px rgba(163, 113, 247, 0.12);
+}
+
+/* Wildcard producer — directional halo on the right (toward events) */
+.react-flow__node.flow-producer-emit-wildcard {
+  position: relative;
+}
+.react-flow__node.flow-producer-emit-wildcard::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 80px;
+  height: 120%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at left center,
+    rgba(163, 113, 247, 0.45) 0%,
+    rgba(163, 113, 247, 0.15) 40%,
+    rgba(163, 113, 247, 0) 75%
+  );
+  animation: flow-wildcard-breath 2.4s ease-in-out infinite;
+}
+
 /* Event-type nodes (inputs + outputs) */
 .react-flow__node.flow-event-node {
   background: var(--color-bg-secondary);
@@ -330,4 +366,65 @@ body,
 }
 .react-flow__controls-button svg {
   fill: currentColor;
+}
+
+/* External events (webhook-reachable) get a dashed teal outline */
+.react-flow__node.flow-event-external {
+  border-color: var(--color-accent);
+  border-style: dashed;
+}
+
+/* ==================== Wildcard listener auras ====================
+   A listener declared with `subscribes: '*'` or `emits: '*'` gets a
+   soft directional halo instead of N individual edges. Emit-side is
+   green (matches emit edge color), subscribe-side is blue (matches
+   subscribe edge color). Breathing animation is slower and softer
+   than the event-pulse animation to stay ambient. */
+
+.react-flow__node.flow-listener-emit-wildcard {
+  /* ensure absolutely-positioned pseudo-elements are anchored here */
+  position: relative;
+}
+.react-flow__node.flow-listener-emit-wildcard::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 80px;
+  height: 120%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at left center,
+    rgba(63, 185, 80, 0.45) 0%,
+    rgba(63, 185, 80, 0.15) 40%,
+    rgba(63, 185, 80, 0) 75%
+  );
+  animation: flow-wildcard-breath 2.4s ease-in-out infinite;
+}
+
+.react-flow__node.flow-listener-sub-wildcard {
+  position: relative;
+}
+.react-flow__node.flow-listener-sub-wildcard::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  width: 80px;
+  height: 120%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at right center,
+    rgba(88, 166, 255, 0.45) 0%,
+    rgba(88, 166, 255, 0.15) 40%,
+    rgba(88, 166, 255, 0) 75%
+  );
+  animation: flow-wildcard-breath 2.4s ease-in-out infinite;
+}
+
+@keyframes flow-wildcard-breath {
+  0%, 100% { opacity: 0.55; transform: translateY(-50%) scale(1); }
+  50%      { opacity: 1;    transform: translateY(-50%) scale(1.08); }
 }

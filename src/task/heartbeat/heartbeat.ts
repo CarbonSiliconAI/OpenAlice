@@ -209,7 +209,7 @@ export function createHeartbeat(opts: HeartbeatOpts): Heartbeat {
 
   const listener: Listener<'cron.fire', HeartbeatEmits> = {
     name: 'heartbeat',
-    eventType: 'cron.fire',
+    subscribes: 'cron.fire',
     emits: HEARTBEAT_EMITS,
     handle: handleFire,
   }

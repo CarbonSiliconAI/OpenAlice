@@ -8,6 +8,7 @@ import type { AskOptions } from '../../../core/ai-provider-manager.js'
 import { SessionStore, toChatHistory } from '../../../core/session.js'
 import { readWebSubchannels } from '../../../core/config.js'
 import { resolveMediaPath } from '../../../core/media-store.js'
+import type { ProducerHandle } from '../../../core/producer.js'
 
 export interface SSEClient {
   id: string
@@ -18,10 +19,11 @@ interface ChatDeps {
   ctx: EngineContext
   sessions: Map<string, SessionStore>
   sseByChannel: Map<string, Map<string, SSEClient>>
+  producer: ProducerHandle<readonly ['message.received', 'message.sent']>
 }
 
 /** Chat routes: POST /, GET /history, GET /events (SSE) */
-export function createChatRoutes({ ctx, sessions, sseByChannel }: ChatDeps) {
+export function createChatRoutes({ ctx, sessions, sseByChannel, producer }: ChatDeps) {
   const app = new Hono()
 
   app.post('/', async (c) => {
@@ -47,7 +49,7 @@ export function createChatRoutes({ ctx, sessions, sseByChannel }: ChatDeps) {
       }
     }
 
-    const receivedEntry = await ctx.eventLog.append('message.received', {
+    const receivedEntry = await producer.emit('message.received', {
       channel: 'web', to: channelId, prompt: message,
     })
 
@@ -74,7 +76,7 @@ export function createChatRoutes({ ctx, sessions, sseByChannel }: ChatDeps) {
       // Stream fully drained — await resolves immediately with cached result
       const result = await stream
 
-      await ctx.eventLog.append('message.sent', {
+      await producer.emit('message.sent', {
         channel: 'web', to: channelId, prompt: message,
         reply: result.text, durationMs: Date.now() - receivedEntry.ts,
       })

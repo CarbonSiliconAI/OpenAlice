@@ -23,6 +23,23 @@ pnpm test           # Unit tests
 
 `pnpm build` uses tsup which is lenient — `tsc --noEmit` catches strict type errors that tsup ignores.
 
+## Working with TODO.md
+
+`TODO.md` at the repo root is the running backlog — deferred work, known
+bugs, security gaps, and design items sitting in the on-deck circle.
+Unfinished items there compound over time if they're forgotten.
+
+- **Before starting non-trivial work**, scan `TODO.md` for related entries.
+  If there's one, either (a) handle it as part of the current change, or
+  (b) confirm with the user why you're skipping it so it doesn't drift.
+- **When finishing a change**, if it resolves a TODO entry, delete that
+  entry in the same commit (git log is the history — the file is a
+  future-looking list, not an audit trail).
+- **When a new item surfaces mid-work** — a known-broken behaviour you
+  don't have scope to fix, a security concern, a half-done UI surface —
+  add it with enough context (symptom + suspected location) that the
+  next person can start without re-derivation.
+
 ## Project Structure
 
 ```

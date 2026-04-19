@@ -58,7 +58,7 @@ export function createCronListener(opts: CronListenerOpts): CronListener {
 
   const listener: Listener<'cron.fire', CronEmits> = {
     name: 'cron-router',
-    eventType: 'cron.fire',
+    subscribes: 'cron.fire',
     emits: CRON_EMITS,
     async handle(
       entry: EventLogEntry<CronFirePayload>,
