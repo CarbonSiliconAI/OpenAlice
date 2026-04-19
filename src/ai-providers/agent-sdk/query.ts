@@ -87,7 +87,7 @@ function stripImageData(raw: string): string {
 
 // ==================== Error classification ====================
 
-type ErrorClass = 'auth' | 'unknown'
+type ErrorClass = 'auth' | 'model' | 'unknown'
 
 const AUTH_PATTERNS = [
   /\b401\b/,
@@ -98,11 +98,20 @@ const AUTH_PATTERNS = [
   /\bx-api-key\b/i,
 ]
 
+const MODEL_PATTERNS = [
+  /\bmodel[_\s-]not[_\s-]found\b/i,
+  /\binvalid[_\s-]?model\b/i,
+  /\bunknown[_\s-]?model\b/i,
+  /\bmodel\s+.+?\s+(?:does\s+not\s+exist|is\s+not\s+(?:a\s+)?valid)\b/i,
+]
+
 function classifyError(details: Record<string, unknown>): ErrorClass {
   const haystack = [details.message, details.stderr, details.stdout]
     .filter((x): x is string => typeof x === 'string')
     .join('\n')
-  return AUTH_PATTERNS.some(p => p.test(haystack)) ? 'auth' : 'unknown'
+  if (AUTH_PATTERNS.some(p => p.test(haystack))) return 'auth'
+  if (MODEL_PATTERNS.some(p => p.test(haystack))) return 'model'
+  return 'unknown'
 }
 
 // ==================== Public ====================
@@ -244,6 +253,8 @@ export async function askAgentSdk(
           logger.error({ ...resultDetail, classification, turns: result.num_turns, durationMs: result.duration_ms }, 'result_error')
           if (classification === 'auth') {
             console.warn('[agent-sdk] Auth failed — check your API key / baseUrl in the active profile')
+          } else if (classification === 'model') {
+            console.warn('[agent-sdk] Model not available on this endpoint — check the region / model combo')
           } else {
             console.error('[agent-sdk] Non-success result:', resultDetail)
           }
@@ -271,6 +282,8 @@ export async function askAgentSdk(
     if (classification === 'auth') {
       // User-fixable: don't scream, just hint. Full detail already in logs/agent-sdk.log.
       console.warn('[agent-sdk] Auth failed — check your API key / baseUrl in the active profile')
+    } else if (classification === 'model') {
+      console.warn('[agent-sdk] Model not available on this endpoint — check the region / model combo')
     } else {
       console.error('[agent-sdk] Claude Code process error:', details)
     }

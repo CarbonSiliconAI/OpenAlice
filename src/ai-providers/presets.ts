@@ -30,12 +30,17 @@ function buildJsonSchema(def: PresetDef): Record<string, unknown> {
   const raw = z.toJSONSchema(def.zodSchema) as Record<string, unknown>
   const props = (raw.properties ?? {}) as Record<string, Record<string, unknown>>
 
-  // Replace model enum with oneOf (labeled options)
-  const mf = 'model'
-  if (def.models?.length && props[mf]) {
-    const oneOf = def.models.map(m => ({ const: m.id, title: m.label }))
-    const { enum: _e, ...rest } = props[mf]
-    props[mf] = { ...rest, oneOf }
+  // Replace scalar string fields with labeled oneOf when a catalog is provided
+  const labeledFields: Array<[string, Array<{ id: string; label: string }> | undefined]> = [
+    ['model', def.models],
+    ['baseUrl', def.endpoints],
+  ]
+  for (const [field, options] of labeledFields) {
+    if (options?.length && props[field]) {
+      const oneOf = options.map(o => ({ const: o.id, title: o.label }))
+      const { enum: _e, ...rest } = props[field]
+      props[field] = { ...rest, oneOf }
+    }
   }
 
   // Mark writeOnly fields
