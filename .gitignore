@@ -2,6 +2,10 @@ node_modules/
 dist/
 logs/
 /data/*
+# Track example/template config files (no secrets)
+!/data/config/
+/data/config/*
+!/data/config/*.example.json
 state.json
 *.log
 

@@ -1,0 +1,33 @@
+[
+  {
+    "id": "alpaca-paper-main",
+    "label": "Alpaca Paper",
+    "type": "alpaca",
+    "enabled": true,
+    "guards": [
+      {
+        "type": "symbol-whitelist",
+        "options": {
+          "symbols": ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "SPY", "QQQ"]
+        }
+      },
+      {
+        "type": "max-position-size",
+        "options": {
+          "maxPercentOfEquity": 10
+        }
+      },
+      {
+        "type": "cooldown",
+        "options": {
+          "minIntervalMs": 300000
+        }
+      }
+    ],
+    "brokerConfig": {
+      "paper": true,
+      "apiKey": "PK_REPLACE_WITH_YOUR_PAPER_KEY",
+      "apiSecret": "REPLACE_WITH_YOUR_PAPER_SECRET"
+    }
+  }
+]
