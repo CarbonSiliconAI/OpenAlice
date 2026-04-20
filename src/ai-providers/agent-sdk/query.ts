@@ -151,6 +151,13 @@ export async function askAgentSdk(
   const isOAuthMode = loginMethod === 'claudeai'
 
   const env: Record<string, string | undefined> = { ...process.env }
+  // Strip parent Claude Code CLI session markers regardless of auth
+  // mode. The Agent SDK cli.js aborts with a nesting guard if any
+  // of these leak through from a parent `claude` process. Applies
+  // to both OAuth and api-key paths.
+  delete env.CLAUDECODE
+  delete env.CLAUDE_CODE_ENTRYPOINT
+  delete env.CLAUDE_CODE_SSE_PORT
   if (isOAuthMode) {
     // Force OAuth by removing any inherited API key
     delete env.ANTHROPIC_API_KEY
