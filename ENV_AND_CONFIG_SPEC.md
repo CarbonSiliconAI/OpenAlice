@@ -354,3 +354,147 @@ that triggered the failure surfaces the error.
    `process.env.X` in client code unless `define` is configured. This may
    be a bug or rely on build-time substitution I did not verify. It is a
    UI-only concern and won't affect backend boot.
+
+---
+
+## Guard Pipeline
+
+Per-account risk guards that run between `tradingPush` and broker dispatch.
+Configured on each `AccountConfig` under the top-level `guards: []` array.
+All guards today inspect `Operation`s of type `placeOrder` only — `modifyOrder`,
+`closePosition`, `cancelOrder`, `syncOrders` pass through untouched.
+
+### Built-in guards
+
+Source: `src/domain/trading/guards/`. Registry: `guards/registry.ts:6-10`.
+
+| Type | Checks | Options (JSON) | Applies to |
+|------|--------|----------------|------------|
+| `max-position-size` | Projected position value as % of `netLiquidation`. Reads `cashQty` directly, or `qty × current marketPrice` for symbols with an existing position. New-symbol + qty-based orders are **allowed through** (broker validates) because there's no price to multiply against. | `{"maxPercentOfEquity": 25}` (default 25%) | `placeOrder` |
+| `cooldown` | Minimum elapsed time between two `placeOrder`s on the same symbol. In-memory per-symbol timestamp; resets on backend restart. | `{"minIntervalMs": 60000}` (default 60 000 ms = 60 s) | `placeOrder` |
+| `symbol-whitelist` | Order's symbol must appear in the `symbols` array. Symbols with `aliceId` resolving to `'unknown'` are **allowed through** (deliberate escape hatch). | `{"symbols": ["AAPL", "MSFT"]}` — **required non-empty**, throws at guard construction if empty | any op with a resolvable symbol |
+
+**UI advertises a fourth guard `max-leverage` for crypto accounts**
+(`ui/src/components/guards.tsx:22`) but there is **no implementation** —
+`src/domain/trading/guards/` has no `max-leverage.ts`, and the backend
+`registry.ts` does not register it. If a user selects it in the UI and
+saves `accounts.json`, `resolveGuards()` logs `guard: unknown type
+"max-leverage", skipped` to the console and the guard silently doesn't
+run. UI/backend drift, safe to flag for securities use.
+
+### Guard interface (`guards/types.ts`)
+```ts
+interface OperationGuard {
+  readonly name: string
+  check(ctx: GuardContext): Promise<string | null> | string | null
+  //   returns null → allow; string → reject with that reason
+}
+
+interface GuardContext {
+  readonly operation: Operation
+  readonly positions: readonly Position[]   // live broker snapshot
+  readonly account: Readonly<AccountInfo>   // netLiquidation, cash, BP
+}
+```
+
+### Where guards run in the push flow
+
+Pipeline wiring (`UnifiedTradingAccount.ts:157-161`):
+```
+createGuardPipeline(dispatcher, broker, resolveGuards(config.guards))
+                    ↑                ↑
+                    broker.placeOrder etc.       array of OperationGuard
+                                                 resolved from accounts.json
+```
+
+Sequence for each op inside `TradingGit.push()` (`git/TradingGit.ts:100-112`):
+
+```
+user clicks Approve & Push  →  UTA.push()
+      │
+      ▼
+for each op in staged[]:
+  ┌───────────────────────────────────────────────────────┐
+  │ guardedDispatcher(op):                                │
+  │   1. Parallel-fetch live positions + account info     │  ← 1 broker roundtrip
+  │   2. Build GuardContext                               │
+  │   3. Run guards in array order:                       │
+  │      for guard of guards:                             │
+  │        result = await guard.check(ctx)                │
+  │        if result !== null → return {success: false,   │
+  │                                     error: "[guard:NAME] REASON"}  ← short-circuits
+  │   4. Else → dispatcher(op) = broker.placeOrder(...)   │  ← broker roundtrip
+  └───────────────────────────────────────────────────────┘
+      │
+      ▼
+parseOperationResult(raw) → OperationResult with status: 'submitted' | 'rejected'
+      │
+      ▼
+after ALL ops:
+  - append GitCommit (with results, stateAfter snapshot) to commits[]
+  - advance head to the new hash
+  - call onCommit (persists to data/trading/<id>/commit.json)
+  - drain staging
+  - return PushResult {submitted: [], rejected: []}
+```
+
+Snapshot + event-log wiring (`main.ts:115-119`):
+- `onPostPush` and `onPostReject` hooks fire a snapshot via `SnapshotService`.
+- Both guard-rejected and broker-accepted paths hit `onPostPush` (the commit
+  landed in `commits[]` either way — see next section).
+
+### Failure semantics
+
+- **Guard rejects one op** → `parseOperationResult` reads `{success: false, error}` and writes `OperationResult` with `status: 'rejected'` (same string as broker-side rejection). Error message is `'[guard:<name>] <reason>'`.
+- **All other ops in the same commit still attempt.** The guard loop short-circuits *within one op*, not across ops. A multi-op commit can return `{submitted: [...], rejected: [...]}` with a partial split.
+- **Commit lands in `commits[]` regardless.** Guard rejections do NOT prevent the commit from being written. The new head advances, `commitCount++`, staging drains. History preserves the full attempt with per-op `results`.
+- **Wallet state after guard-rejected push:** identical shape to a normal push — `staged: []`, `pendingMessage: null`, `pendingHash: null`, `head: <new hash>`. The only difference is the `results` inside the commit.
+- **Alpaca impact:** zero. The broker is never called for a guard-rejected op.
+- **Identifying which guard fired:** read `error` string — `[guard:max-position-size] Position for AAPL would be 30.0% of equity (limit: 25%)` is the canonical format.
+- **UI surfacing:** `PushApprovalPanel.tsx:313-333` renders `lastResult.data.rejected[].error` verbatim in a red strip after push. The `[guard:NAME]` prefix tells the user which guard fired. Note this is transient (cleared on the next push). The permanent record is in `wallet/log`'s per-op `results[]`, though the condensed `/wallet/log` endpoint shape (`{symbol, action, change, status}`) does not currently expose per-op error strings — only `status: 'rejected'`. To see the reason after the fact you need `/wallet/show/:hash` which returns the full commit with full `results`.
+
+### Test coverage
+
+`src/domain/trading/guards/guards.spec.ts` covers all three built-in
+guards with unit tests (positive + negative cases) plus integration tests
+for the pipeline and registry. Existing pattern to copy if you add new
+guards.
+
+### Example config for a simple guard
+
+Add a `max-position-size: 5%` limit to the Alpaca paper account — edit
+`data/config/accounts.json`:
+
+```json
+[
+  {
+    "id": "alpaca-paper-main",
+    "type": "alpaca",
+    "enabled": true,
+    "guards": [
+      { "type": "max-position-size", "options": { "maxPercentOfEquity": 5 } }
+    ],
+    "brokerConfig": { "paper": true, "apiKey": "...", "apiSecret": "..." }
+  }
+]
+```
+
+Restart the backend (guards are resolved at UTA construction time — hot
+reload of `accounts.json` is **not** implemented). Next push attempt for
+a position that would exceed 5% of equity returns
+`[guard:max-position-size] Position for X would be Y% of equity (limit: 5%)`.
+
+### Gaps / constraints
+
+- Guards are instantiated at account init (main.ts:106-110) and never
+  re-read from disk. Any edit to `accounts.json`'s `guards` requires a
+  backend restart to take effect.
+- `cooldown` state is in-memory only. Restart resets all cooldown windows.
+- Guards see `placeOrder` ops but not the *aggregate* pending commit —
+  a single commit with 5 orders for the same symbol is checked five
+  times, but `cooldown` will correctly block ops 2–5 within the batch
+  because it updates `lastTradeTime` inside `check()` (which has a side
+  effect — mildly surprising for a supposedly read-only predicate).
+- No built-in: daily-loss cap, max-order-notional, max-open-orders,
+  concentration-across-sector, trading-hours gate. Those would be new
+  guards implementing `OperationGuard`.
