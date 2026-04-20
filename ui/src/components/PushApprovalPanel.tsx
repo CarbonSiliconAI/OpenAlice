@@ -37,10 +37,21 @@ function opSymbol(op: WalletStatus['staged'][number]): string {
  * the default toLocaleString behavior that truncates decimals to 3 (which
  * turns crypto-scale quantities like 0.00012345 into "0").
  */
+const IBKR_SENTINELS = new Set([
+  '1.70141183460469231731687303715884105727e+38',  // UNSET_DECIMAL  (2^127 - 1)
+  '1.7976931348623157e+308',                        // UNSET_DOUBLE   (Number.MAX_VALUE)
+  '2147483647',                                     // UNSET_INTEGER  (INT32_MAX)
+])
+
 function fmtNum(n: number | string | undefined | null): string {
   if (n == null || n === '') return ''
-  if (typeof n === 'string') return n
-  if (!Number.isFinite(n)) return String(n)
+  if (typeof n === 'string') {
+    if (IBKR_SENTINELS.has(n)) return ''
+    return n
+  }
+  if (!Number.isFinite(n)) return ''
+  // Also catch numeric forms of the sentinels in case backend ever ships them un-stringified.
+  if (n > 1e30 || n === 2147483647) return ''
   const rounded = n.toFixed(8).replace(/\.?0+$/, '')
   const [intPart, decPart] = rounded.split('.')
   const withCommas = Number(intPart).toLocaleString('en-US')
@@ -57,7 +68,9 @@ function formatOp(op: WalletStatus['staged'][number]): { text: string; side?: 'b
       const type = (op.order?.orderType || '').toUpperCase()
       const typeBadge = type === 'MKT' || type === 'MARKET' ? 'MKT' : type === 'LMT' || type === 'LIMIT' ? 'LMT' : type
       const qtyStr = fmtNum(op.order?.totalQuantity ?? op.order?.cashQty)
-      const priceStr = fmtNum(op.order?.lmtPrice)
+      // Only order types that carry a limit price should display one.
+      const LIMIT_PRICE_TYPES = new Set(['LMT', 'LIMIT', 'STP LMT', 'TRAIL LIMIT'])
+      const priceStr = LIMIT_PRICE_TYPES.has(type) ? fmtNum(op.order?.lmtPrice) : ''
       const price = priceStr ? ` @ ${priceStr}` : ''
       return {
         text: `${sideRaw} ${qtyStr} ${symbol} ${typeBadge}${price}`.trim(),
