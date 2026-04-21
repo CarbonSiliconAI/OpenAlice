@@ -370,7 +370,7 @@ Source: `src/domain/trading/guards/`. Registry: `guards/registry.ts:6-10`.
 
 | Type | Checks | Options (JSON) | Applies to |
 |------|--------|----------------|------------|
-| `max-position-size` | Projected position value as % of `netLiquidation`. Reads `cashQty` directly, or `qty × current marketPrice` for symbols with an existing position. New-symbol + qty-based orders are **allowed through** (broker validates) because there's no price to multiply against. | `{"maxPercentOfEquity": 25}` (default 25%) | `placeOrder` |
+| `max-position-size` | Projected position value as % of `netLiquidation`. Reads `cashQty` directly, or `qty × current marketPrice` for symbols with an existing position, or `qty × pipeline-supplied last-trade price` for new symbols when the pipeline could fetch a quote. Falls back to allow-by-default only when none of the three estimators have usable data (quote fetch failed or symbol has no live market). | `{"maxPercentOfEquity": 25}` (default 25%) | `placeOrder` |
 | `cooldown` | Minimum elapsed time between two `placeOrder`s on the same symbol. In-memory per-symbol timestamp; resets on backend restart. | `{"minIntervalMs": 60000}` (default 60 000 ms = 60 s) | `placeOrder` |
 | `symbol-whitelist` | Order's symbol must appear in the `symbols` array. Symbols with `aliceId` resolving to `'unknown'` are **allowed through** (deliberate escape hatch). | `{"symbols": ["AAPL", "MSFT"]}` — **required non-empty**, throws at guard construction if empty | any op with a resolvable symbol |
 
@@ -394,8 +394,18 @@ interface GuardContext {
   readonly operation: Operation
   readonly positions: readonly Position[]   // live broker snapshot
   readonly account: Readonly<AccountInfo>   // netLiquidation, cash, BP
+  readonly estimatedPrice?: Decimal         // best-effort, placeOrder only
+  readonly priceSource?: 'last' | 'ask'     // which broker field produced it
 }
 ```
+
+As of commit `8c1cc3c`, the pipeline pre-fetches a best-effort quote
+for `placeOrder` ops with a 2-second timeout and attaches `estimatedPrice`
+to the context. `max-position-size` uses it to evaluate qty-only orders
+on new symbols (the scenario that bypassed the guard in Task 6 Test B).
+Quote failures fall back to the original allow-by-default behavior —
+the escape hatch only fires when neither `cashQty`, an existing position,
+nor a pipeline-supplied quote is available.
 
 ### Where guards run in the push flow
 
