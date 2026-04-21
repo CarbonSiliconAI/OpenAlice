@@ -109,11 +109,40 @@ describe('MaxPositionSizeGuard', () => {
     expect(guard.check(ctx)).toBeNull()
   })
 
-  it('allows when addedValue cannot be estimated (qty-based, no existing position)', () => {
+  it('allows when addedValue cannot be estimated (qty-based, no existing position, no quote)', () => {
     const guard = new MaxPositionSizeGuard({ maxPercentOfEquity: 1 })
     const ctx = makeContext({
       operation: makePlaceOrderOp({ symbol: 'NEW_STOCK', totalQuantity: new Decimal(100) }),
     })
+    expect(guard.check(ctx)).toBeNull()
+  })
+
+  it('rejects qty-only new symbol when pipeline supplies estimatedPrice', () => {
+    const guard = new MaxPositionSizeGuard({ maxPercentOfEquity: 10 })
+    // 60 shares × $300 = $18000 = 18% of $100k equity → exceeds 10% limit
+    const ctx: GuardContext = {
+      ...makeContext({
+        operation: makePlaceOrderOp({ symbol: 'AAPL', totalQuantity: new Decimal(60) }),
+        account: { netLiquidation: '100000' },
+      }),
+      estimatedPrice: new Decimal(300),
+      priceSource: 'last',
+    }
+    const result = guard.check(ctx)
+    expect(result).not.toBeNull()
+    expect(result).toContain('18.0%')
+    expect(result).toContain('limit: 10%')
+  })
+
+  it('allows qty-only new symbol when estimatedPrice is undefined (escape hatch preserved)', () => {
+    const guard = new MaxPositionSizeGuard({ maxPercentOfEquity: 1 })
+    // Same shape as the rejecting test, but estimatedPrice omitted
+    const ctx: GuardContext = {
+      ...makeContext({
+        operation: makePlaceOrderOp({ symbol: 'NEW', totalQuantity: new Decimal(9999) }),
+        account: { netLiquidation: '100000' },
+      }),
+    }
     expect(guard.check(ctx)).toBeNull()
   })
 })
@@ -244,6 +273,43 @@ describe('createGuardPipeline', () => {
     expect(guardA.check).toHaveBeenCalled()
     expect(guardB.check).toHaveBeenCalled()
     expect(guardC.check).not.toHaveBeenCalled()
+  })
+
+  it('fetches a quote for placeOrder and populates estimatedPrice + priceSource', async () => {
+    const dispatcher = vi.fn().mockResolvedValue({ success: true })
+    const account = new MockBroker()
+    account.setQuote('AAPL', 271)
+
+    let capturedCtx: GuardContext | undefined
+    const spyGuard: OperationGuard = {
+      name: 'spy',
+      check: (ctx) => { capturedCtx = ctx; return null },
+    }
+
+    const pipeline = createGuardPipeline(dispatcher, account, [spyGuard])
+    await pipeline(makePlaceOrderOp({ symbol: 'AAPL' }))
+
+    expect(account.callCount('getQuote')).toBe(1)
+    expect(capturedCtx).toBeDefined()
+    expect(capturedCtx!.estimatedPrice?.toString()).toBe('271')
+    expect(capturedCtx!.priceSource).toBe('last')
+  })
+
+  it('does not fetch a quote for non-placeOrder operations', async () => {
+    const dispatcher = vi.fn().mockResolvedValue({ success: true })
+    const account = new MockBroker()
+    const allowGuard: OperationGuard = { name: 'allow', check: () => null }
+
+    const pipeline = createGuardPipeline(dispatcher, account, [allowGuard])
+
+    // closePosition should not trigger getQuote
+    const contract = makeContract({ symbol: 'AAPL' })
+    await pipeline({ action: 'closePosition', contract })
+    expect(account.callCount('getQuote')).toBe(0)
+
+    // cancelOrder should not either
+    await pipeline({ action: 'cancelOrder', orderId: '123' })
+    expect(account.callCount('getQuote')).toBe(0)
   })
 
   it('fetches positions and account info for guard context', async () => {

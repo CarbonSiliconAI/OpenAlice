@@ -31,8 +31,10 @@ export class MaxPositionSizeGuard implements OperationGuard {
       addedValue = cashQty
     } else if (qty && existing) {
       addedValue = qty.mul(existing.marketPrice)
+    } else if (qty && ctx.estimatedPrice) {
+      addedValue = qty.mul(ctx.estimatedPrice)
     }
-    // If we can't estimate (new symbol + qty-based without existing position), allow — broker will validate
+    // If we still can't estimate (qty-based, no existing position, no quote), allow — broker will validate
 
     if (addedValue.isZero()) return null
 
