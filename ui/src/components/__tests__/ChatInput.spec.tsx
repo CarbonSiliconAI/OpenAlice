@@ -19,7 +19,7 @@ describe('ChatInput — issue #65: IME composition Enter', () => {
     const { getByPlaceholderText } = render(
       <ChatInput disabled={false} onSend={onSend} />,
     )
-    const textarea = getByPlaceholderText('Message Alice...')
+    const textarea = getByPlaceholderText('Message Adrian...')
 
     fireEvent.change(textarea, { target: { value: 'hello' } })
 
@@ -38,7 +38,7 @@ describe('ChatInput — issue #65: IME composition Enter', () => {
     const { getByPlaceholderText } = render(
       <ChatInput disabled={false} onSend={onSend} />,
     )
-    const textarea = getByPlaceholderText('Message Alice...')
+    const textarea = getByPlaceholderText('Message Adrian...')
 
     fireEvent.change(textarea, { target: { value: '你' } })
 
@@ -57,7 +57,7 @@ describe('ChatInput — issue #65: IME composition Enter', () => {
     const { getByPlaceholderText } = render(
       <ChatInput disabled={false} onSend={onSend} />,
     )
-    const textarea = getByPlaceholderText('Message Alice...')
+    const textarea = getByPlaceholderText('Message Adrian...')
 
     fireEvent.change(textarea, { target: { value: 'line1' } })
 

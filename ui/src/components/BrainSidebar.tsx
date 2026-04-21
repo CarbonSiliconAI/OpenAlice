@@ -88,8 +88,8 @@ function FrontalLobePanel({
     ? <MarkdownContent text={current} />
     : <span className="text-[12px] text-text-muted/50 italic">(empty)</span>
 
-  // The "written Nh ago" cue lines up with what Alice sees in her own system
-  // prompt, so the user can reason about the same staleness she does.
+  // The "written Nh ago" cue lines up with what Adrian sees in his own system
+  // prompt, so the user can reason about the same staleness he does.
   const ageLabel = updatedAt ? formatRelativeAge(updatedAt) : null
   const subtitle = ageLabel
     ? `${commits.length} version${commits.length === 1 ? '' : 's'} · written ${ageLabel}`

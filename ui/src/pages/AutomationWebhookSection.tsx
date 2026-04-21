@@ -30,20 +30,20 @@ interface ExternalEventDoc {
 const EXTERNAL_DOCS: Record<string, ExternalEventDoc> = {
   'task.requested': {
     summary:
-      'Ask Alice to run a one-shot task. The prompt is sent through the agent and the reply is delivered back to whichever connector (Web / Telegram) you last interacted with.',
+      'Ask Adrian to run a one-shot task. The prompt is sent through the agent and the reply is delivered back to whichever connector (Web / Telegram) you last interacted with.',
     fields: [
       {
         name: 'prompt',
         type: 'string',
         required: true,
-        description: 'What you want Alice to do or check. Plain natural language.',
+        description: 'What you want Adrian to do or check. Plain natural language.',
       },
     ],
     example: {
       prompt: 'Check if BTC moved more than 5% in the last hour.',
     },
     notes:
-      'Task runs serially — if a task is still in flight when another arrives, the new one is skipped. Each task shares the `task/default` session, so Alice retains context across triggers.',
+      'Task runs serially — if a task is still in flight when another arrives, the new one is skipped. Each task shares the `task/default` session, so Adrian retains context across triggers.',
   },
 }
 
@@ -312,7 +312,7 @@ function TryItForm() {
         onChange={(e) => setPrompt(e.target.value)}
         rows={3}
         className="w-full bg-bg-tertiary border border-border rounded-md px-3 py-2 text-sm text-text outline-none focus:border-accent resize-none"
-        placeholder="Prompt for Alice…"
+        placeholder="Prompt for Adrian…"
       />
 
       <div className="flex items-center gap-3">
@@ -369,7 +369,7 @@ export function AutomationWebhookSection() {
       <div className="max-w-[880px] mx-auto space-y-5">
         <div className="rounded-lg border border-border/50 bg-bg-secondary/50 px-4 py-3">
           <p className="text-[13px] text-text-muted leading-relaxed">
-            Trigger Alice from outside the process. Any HTTP client — TradingView alert webhook, a server
+            Trigger Adrian from outside the process. Any HTTP client — TradingView alert webhook, a server
             crontab running <code className="font-mono">curl</code>, Zapier/Make, a custom script — can POST
             an event to the ingest endpoint below. Accepted events flow through the same bus as internal
             events; the Flow tab shows the injection arrive and the task listener fire in real time.

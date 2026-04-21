@@ -278,7 +278,7 @@ export function AutomationFlowSection() {
     <div className="flex flex-col gap-3 h-full">
       <div className="rounded-lg border border-border/50 bg-bg-secondary/50 px-4 py-3">
         <p className="text-[13px] text-text-muted leading-relaxed">
-          Alice's async lifecycle as a graph. Four columns left-to-right: producers (pure event sources),
+          Adrian's async lifecycle as a graph. Four columns left-to-right: producers (pure event sources),
           event types as subscribe sources, registered listeners, and event types as emit targets. Only
           sides of an event that actually participate in the graph are rendered — a terminal output like
           <code className="font-mono mx-1">cron.done</code> shows up only on the right; a pure input like

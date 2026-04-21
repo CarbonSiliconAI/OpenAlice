@@ -44,7 +44,7 @@ export function ChatInput({ disabled, onSend }: ChatInputProps) {
           ref={textareaRef}
           disabled={disabled}
           className="flex-1 bg-transparent text-text border-none outline-none font-sans text-[15px] leading-relaxed resize-none max-h-[200px] placeholder:text-text-muted/70 disabled:opacity-50 disabled:cursor-not-allowed py-0.5"
-          placeholder={disabled ? 'Waiting for response...' : 'Message Alice...'}
+          placeholder={disabled ? 'Waiting for response...' : 'Message Adrian...'}
           rows={1}
           onKeyDown={handleKeyDown}
           onChange={handleInput}

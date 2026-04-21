@@ -50,7 +50,7 @@ function SettingsSection() {
         </ConfigSection>
 
         {/* Persona */}
-        <ConfigSection title="Persona" description="The system prompt that defines Alice's personality and behavior. Changes take effect on next server restart.">
+        <ConfigSection title="Persona" description="The system prompt that defines Adrian's personality and behavior. Changes take effect on next server restart.">
           <PersonaEditor />
         </ConfigSection>
 

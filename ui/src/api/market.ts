@@ -33,7 +33,7 @@ export interface HistoricalResponse {
 }
 
 export const marketApi = {
-  /** Alice's aggregated heuristic search across all asset classes. */
+  /** Adrian's aggregated heuristic search across all asset classes. */
   async search(query: string, limit = 20): Promise<SearchResponse> {
     const qs = new URLSearchParams({ query, limit: String(limit) })
     return fetchJson(`/api/market/search?${qs}`)

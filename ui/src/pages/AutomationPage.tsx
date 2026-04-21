@@ -289,7 +289,7 @@ function HeartbeatSection() {
         <div className="rounded-lg border border-border/50 bg-bg-secondary/50 px-4 py-3">
           <p className="text-[13px] text-text-muted leading-relaxed">
             Heartbeat is a periodic self-check that runs as an internal cron job on the event bus.
-            When fired, Alice reviews current state and decides whether to notify you.
+            When fired, Adrian reviews current state and decides whether to notify you.
             Configure the interval, active hours, and prompt below.
           </p>
         </div>
@@ -371,7 +371,7 @@ function CronSection() {
       <div className="rounded-lg border border-border/50 bg-bg-secondary/50 px-4 py-3">
         <p className="text-[13px] text-text-muted leading-relaxed">
           Cron jobs fire events on the dispatch bus at scheduled intervals.
-          Each job's payload is sent to Alice as a prompt — use them for periodic checks, reports, or any recurring task.
+          Each job's payload is sent to Adrian as a prompt — use them for periodic checks, reports, or any recurring task.
           Internal jobs (heartbeat, snapshot) are managed by their own tabs.
         </p>
       </div>

@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { type Page, ROUTES } from '../App'
+import BrandAvatar from './BrandAvatar'
 
 interface SidebarProps {
   sseConnected: boolean
@@ -240,13 +241,11 @@ export function Sidebar({ sseConnected, open, onClose }: SidebarProps) {
       >
         {/* Branding */}
         <div className="px-5 py-4 flex items-center gap-2.5">
-          <img
-            src="/alice.ico"
-            alt="Alice"
-            className="w-7 h-7 rounded-lg ring-1 ring-accent/25 shadow-[0_0_8px_rgba(88,166,255,0.15)]"
-            draggable={false}
+          <BrandAvatar
+            size={28}
+            className="ring-1 ring-accent/25 shadow-[0_0_8px_rgba(88,166,255,0.15)]"
           />
-          <h1 className="text-[15px] font-semibold text-text">OpenAlice</h1>
+          <h1 className="text-[15px] font-semibold text-text">Adrian</h1>
         </div>
 
         {/* Navigation */}

@@ -4,6 +4,7 @@ import type { DiaryCycle, DiaryOutcome } from '../api/diary'
 import { ToolCallGroup } from '../components/ChatMessage'
 import { MarkdownContent } from '../components/MarkdownContent'
 import { BrainSidebar } from '../components/BrainSidebar'
+import BrandAvatar from '../components/BrandAvatar'
 
 // ==================== Constants ====================
 
@@ -17,7 +18,7 @@ const CYCLE_TS_SLACK_MS = 5_000
 
 /**
  * Strip heartbeat response preamble ("STATUS: HEARTBEAT_OK — ..." / "STATUS: CHAT_YES\n...")
- * so the diary shows Alice's actual thought, not the machine-facing status token.
+ * so the diary shows Adrian's actual thought, not the machine-facing status token.
  */
 function stripStatusPrefix(text: string): string {
   const m = text.match(/^\s*STATUS:\s*(HEARTBEAT_OK|CHAT_YES)\s*(?:[\u2014\-:]\s*)?([\s\S]*)$/)
@@ -272,7 +273,7 @@ export function DiaryPage() {
         {/* Slim header */}
         <div className="flex items-baseline gap-3 px-5 pt-6 pb-4 shrink-0">
           <h1 className="text-xl font-semibold text-text tracking-tight">Diary</h1>
-          <span className="text-[12px] text-text-muted/60">what Alice has been up to</span>
+          <span className="text-[12px] text-text-muted/60">what Adrian has been up to</span>
           <button
             onClick={handleRefresh}
             className="ml-auto text-text-muted hover:text-text p-1.5 rounded-md hover:bg-bg-secondary transition-colors"
@@ -301,7 +302,7 @@ export function DiaryPage() {
 
             {!loading && rendered.length === 0 && !error && (
               <div className="flex flex-col items-center justify-center h-full gap-3 select-none">
-                <img src="/alice.ico" alt="Alice" className="w-12 h-12 rounded-2xl ring-1 ring-accent/20 opacity-70" />
+                <BrandAvatar size={48} className="ring-1 ring-accent/20 opacity-70" />
                 <div className="text-center">
                   <h2 className="text-base font-semibold text-text mb-1">Nothing yet</h2>
                   <p className="text-[12px] text-text-muted">Heartbeat cycles will appear here as they run.</p>
