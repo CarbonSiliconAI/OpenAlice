@@ -119,6 +119,36 @@ describe('readSignal tool', () => {
     }
   })
 
+  it('(f) accepts stale_data field and surfaces it in summary', async () => {
+    const report = validReport() as Record<string, unknown>
+    report.stale_data = ['CFLT', 'OLDSTOCK']
+    writeFileSync(join(tmp, '2026-04-23.json'), JSON.stringify(report))
+    const tools = createSignalTools(tmp)
+    const result = await invokeReadSignal(tools.readSignal, { date: '2026-04-23' }) as Record<string, unknown>
+    expect(result.found).toBe(true)
+    expect(result.error).toBeUndefined()
+    const signal = result.signal as { stale_data: string[] }
+    expect(signal.stale_data).toEqual(['CFLT', 'OLDSTOCK'])
+    const summary = result.summary as { stale_data_count: number; stale_tickers: string[] }
+    expect(summary.stale_data_count).toBe(2)
+    expect(summary.stale_tickers).toEqual(['CFLT', 'OLDSTOCK'])
+  })
+
+  it('(g) defaults stale_data to [] when field absent (back-compat)', async () => {
+    // Pre-staleness-fix signal files wouldn't have this field
+    const report = validReport() as Record<string, unknown>
+    delete report.stale_data  // not set by older generators
+    writeFileSync(join(tmp, '2026-04-23.json'), JSON.stringify(report))
+    const tools = createSignalTools(tmp)
+    const result = await invokeReadSignal(tools.readSignal, { date: '2026-04-23' }) as Record<string, unknown>
+    expect(result.found).toBe(true)
+    expect(result.error).toBeUndefined()
+    const signal = result.signal as { stale_data: string[] }
+    expect(signal.stale_data).toEqual([])
+    const summary = result.summary as { stale_data_count: number }
+    expect(summary.stale_data_count).toBe(0)
+  })
+
   it('expandHome resolves ~/ prefix to absolute path', () => {
     const expanded = expandHome('~/Projects/signal-pipeline/signals')
     expect(expanded.startsWith('/')).toBe(true)

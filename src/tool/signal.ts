@@ -58,6 +58,7 @@ export const signalReportSchema = z.object({
   signals: z.array(signalEntrySchema),
   no_signal: z.array(z.string()).default([]),
   insufficient_data: z.array(z.string()).default([]),
+  stale_data: z.array(z.string()).default([]),
   portfolio_suggestion: portfolioSuggestionSchema,
   generated_at: z.string(),
 })
@@ -91,6 +92,8 @@ These signals are HINTS, not commands — they indicate suggested BUY/SELL entri
 Signals apply to the whole configured universe, not any specific account.
 
 To use a signal, first call listAccounts and getPortfolio to know what you can trade, then intersect the signal.universe with each account's whitelist. Only stage orders for symbols that are in all three sets (signal, whitelist, Adrian's capital available).
+
+insufficient_data contains symbols where the generator did not have enough bars to evaluate (e.g. recently-listed tickers). stale_data contains symbols whose latest bar is older than 5 business days. The generator rejected them as too stale to evaluate. Treat these as data quality issues — they should NOT be considered for staging. If a symbol you expected to trade appears in stale_data, investigate the data source before manually overriding.
 
 The tool returns the full SignalReport plus a compact summary. If no signal file exists for the date, it returns {found: false, error: ...} so you know there is nothing to act on.`,
       inputSchema: z.object({
@@ -153,6 +156,8 @@ The tool returns the full SignalReport plus a compact summary. If no signal file
             sell_count: sellCount,
             no_signal_count: signal.no_signal.length,
             insufficient_data_count: signal.insufficient_data.length,
+            stale_data_count: signal.stale_data.length,
+            stale_tickers: signal.stale_data,
             top_signals: signal.signals.slice(0, 5).map((s) => ({
               symbol: s.symbol,
               action: s.action_hint,
