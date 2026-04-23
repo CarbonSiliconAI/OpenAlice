@@ -149,6 +149,76 @@ describe('readSignal tool', () => {
     expect(summary.stale_data_count).toBe(0)
   })
 
+  it('(h) parses KK fixture with pair_trades and long_short_baskets', async () => {
+    const fixturePath = join(homedir(), 'Projects/signal-pipeline/tests/fixtures/kk_sample_signal.json')
+    if (!existsSync(fixturePath)) return  // skip if fixture missing
+    const { readFileSync } = await import('node:fs')
+    // Copy fixture into the tmp signals dir under today's date
+    writeFileSync(join(tmp, '2026-04-23.json'), readFileSync(fixturePath, 'utf-8'))
+    const tools = createSignalTools(tmp)
+    const result = await invokeReadSignal(tools.readSignal, { date: '2026-04-23' }) as Record<string, unknown>
+    expect(result.found).toBe(true)
+    expect(result.error).toBeUndefined()
+    const signal = result.signal as { pair_trades: unknown[]; long_short_baskets: unknown[] }
+    expect(signal.pair_trades).toHaveLength(1)
+    expect(signal.long_short_baskets).toHaveLength(1)
+    const summary = result.summary as {
+      pair_trades_count: number; baskets_count: number;
+      top_pair_trades: Array<{ long: string; short: string; strategy_source: string }>;
+      top_baskets: Array<{ hedge_mode: string; strategy_source: string }>;
+    }
+    expect(summary.pair_trades_count).toBe(1)
+    expect(summary.baskets_count).toBe(1)
+    expect(summary.top_pair_trades[0].long).toBe('NVDA')
+    expect(summary.top_pair_trades[0].short).toBe('CRM')
+    expect(summary.top_pair_trades[0].strategy_source).toBe('kk-ai-displacement-pair')
+    expect(summary.top_baskets[0].hedge_mode).toBe('dollar_neutral')
+    expect(summary.top_baskets[0].strategy_source).toBe('kk-ai-displacement-basket')
+  })
+
+  it('(i) preserves strategy_source on SignalEntry', async () => {
+    const report = validReport() as Record<string, unknown>
+    report.signals = [{
+      symbol: 'NVDA',
+      action_hint: 'BUY',
+      trigger: 'golden_cross',
+      conviction: 'medium',
+      strategy_source: 'test-gen',
+    }]
+    writeFileSync(join(tmp, '2026-04-23.json'), JSON.stringify(report))
+    const tools = createSignalTools(tmp)
+    const result = await invokeReadSignal(tools.readSignal, { date: '2026-04-23' }) as Record<string, unknown>
+    expect(result.found).toBe(true)
+    const signal = result.signal as { signals: Array<{ symbol: string; strategy_source?: string | null }> }
+    expect(signal.signals[0].strategy_source).toBe('test-gen')
+    const summary = result.summary as { top_signals: Array<{ strategy_source: string | null }> }
+    expect(summary.top_signals[0].strategy_source).toBe('test-gen')
+  })
+
+  it('(j) back-compat: old signal without pair_trades/baskets/strategy_source validates', async () => {
+    // Use today's real MA signal file shape — has stale_data but no pair_trades/baskets/strategy_source
+    const realPath = join(homedir(), 'Projects/signal-pipeline/signals/2026-04-23.json')
+    if (!existsSync(realPath)) return  // skip if missing
+    const { readFileSync } = await import('node:fs')
+    writeFileSync(join(tmp, '2026-04-23.json'), readFileSync(realPath, 'utf-8'))
+    const tools = createSignalTools(tmp)
+    const result = await invokeReadSignal(tools.readSignal, { date: '2026-04-23' }) as Record<string, unknown>
+    expect(result.found).toBe(true)
+    expect(result.error).toBeUndefined()
+    const signal = result.signal as { pair_trades: unknown[]; long_short_baskets: unknown[]; signals: Array<{ strategy_source?: string | null }> }
+    expect(signal.pair_trades).toEqual([])
+    expect(signal.long_short_baskets).toEqual([])
+    // SignalEntry strategy_source is optional — MA generator may or may not set it
+    // (the current generator does set it; older generations would have undefined)
+    for (const s of signal.signals) {
+      // Either string or undefined/null — both are valid
+      expect(['string', 'undefined', 'object'].includes(typeof s.strategy_source)).toBe(true)
+    }
+    const summary = result.summary as { pair_trades_count: number; baskets_count: number }
+    expect(summary.pair_trades_count).toBe(0)
+    expect(summary.baskets_count).toBe(0)
+  })
+
   it('expandHome resolves ~/ prefix to absolute path', () => {
     const expanded = expandHome('~/Projects/signal-pipeline/signals')
     expect(expanded.startsWith('/')).toBe(true)
