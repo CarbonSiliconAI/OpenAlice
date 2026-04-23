@@ -34,6 +34,7 @@ invoked if you run a remote openbb-api server).
 |-----|----------|---------|---------|--------|
 | `CODEX_HOME` | No | `~/.codex` | Codex provider — path to `codex login` auth dir | `src/ai-providers/codex/auth.ts:41` |
 | `COMPACT_PCT_OVERRIDE` | No | — | Testing knob for context-compaction threshold (float) | `src/core/compaction.ts:70-71` |
+| `SIGNAL_PIPELINE_PATH` | No | `~/Projects/signal-pipeline/signals` | Directory containing daily `YYYY-MM-DD.json` signal files, consumed by the `readSignal` tool and `GET /api/trading/signal/:date?`. Leading `~/` is expanded to the user's home directory. | `src/main.ts` (signalPath resolution), `src/tool/signal.ts` (factory + schema), `src/connectors/web/routes/trading.ts` (HTTP route) |
 | `OPENCLAW_IMAGE_BACKEND` | No | auto (`"sips"` on macOS+Bun, `"sharp"` otherwise) | openclaw browser sandbox image ops | `src/openclaw/media/image-ops.ts:21-22` |
 | `OPENCLAW_HOME` | No | derived | openclaw work dir override | `src/openclaw/utils.ts:340` |
 | `OPENCLAW_GATEWAY_TOKEN` / `CLAWDBOT_GATEWAY_TOKEN` | No | — | Remote openclaw gateway bearer token (only if browser tool calls a remote gateway) | `src/openclaw/gateway/call.ts:215-216` |

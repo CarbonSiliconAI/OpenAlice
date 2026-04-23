@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir } from 'fs/promises'
-import { resolve, dirname } from 'path'
+import { resolve, dirname, join } from 'path'
+import { homedir } from 'os'
 // Engine removed — AgentCenter is the top-level AI entry point
 import { loadConfig, readAccountsConfig } from './core/config.js'
 import type { Plugin, EngineContext, ReconnectResult } from './core/types.js'
@@ -46,6 +47,7 @@ import { createMetricsListener } from './task/metrics/index.js'
 import { createTaskRouter } from './task/task-router/index.js'
 import { NewsCollectorStore, NewsCollector } from './domain/news/index.js'
 import { createNewsArchiveTools } from './tool/news.js'
+import { createSignalTools } from './tool/signal.js'
 
 // ==================== Persistence paths ====================
 
@@ -234,6 +236,10 @@ async function main() {
     toolCenter.register(createNewsArchiveTools(newsStore), 'news')
   }
   toolCenter.register(createAnalysisTools(equityClient, cryptoClient, currencyClient, commodityClient), 'analysis')
+
+  // Signal-pipeline read-only bridge: env override, else default to ~/Projects/signal-pipeline/signals
+  const signalPath = process.env.SIGNAL_PIPELINE_PATH?.trim() || join(homedir(), 'Projects/signal-pipeline/signals')
+  toolCenter.register(createSignalTools(signalPath), 'signal')
 
   console.log(`tool-center: ${toolCenter.list().length} tools registered`)
 
