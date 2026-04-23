@@ -97,6 +97,12 @@ export interface RejectResult {
   operationCount: number
 }
 
+export interface DropResult {
+  dropped: true
+  droppedOp: Operation
+  remainingStagedCount: number
+}
+
 export interface GitStatus {
   staged: Operation[]
   pendingMessage: string | null

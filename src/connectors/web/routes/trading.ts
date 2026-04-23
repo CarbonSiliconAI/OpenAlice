@@ -161,6 +161,30 @@ export function createTradingRoutes(ctx: EngineContext) {
     return c.json(uta.status())
   })
 
+  // Drop a single op from the staging buffer (refuses if pending commit exists)
+  app.delete('/accounts/:id/wallet/staged/:index', (c) => {
+    const uta = ctx.accountManager.get(c.req.param('id'))
+    if (!uta) return c.json({ error: 'Account not found' }, 404)
+    const rawIndex = c.req.param('index')
+    const index = Number(rawIndex)
+    if (!Number.isInteger(index) || index < 0) {
+      return c.json({ error: 'index must be a non-negative integer' }, 400)
+    }
+    try {
+      const result = uta.dropStaged(index)
+      return c.json({
+        dropped: true,
+        droppedOp: {
+          action: result.droppedOp.action,
+          symbol: 'contract' in result.droppedOp ? (result.droppedOp.contract?.symbol ?? 'unknown') : 'n/a',
+        },
+        remainingStagedCount: result.remainingStagedCount,
+      })
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
+    }
+  })
+
   // Reject (records a user-rejected commit, clears staging)
   app.post('/accounts/:id/wallet/reject', async (c) => {
     const uta = ctx.accountManager.get(c.req.param('id'))

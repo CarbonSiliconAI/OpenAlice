@@ -17,6 +17,7 @@ import type {
   CommitPrepareResult,
   PushResult,
   RejectResult,
+  DropResult,
   GitStatus,
   GitCommit,
   GitState,
@@ -139,6 +140,36 @@ export class TradingGit implements ITradingGit {
     const submitted = results.filter((r) => r.success)
 
     return { hash, message, operationCount: operations.length, submitted, rejected }
+  }
+
+  /**
+   * Remove a single op from the staging buffer by zero-based index.
+   * Refuses to run while a pending commit exists — the pending hash was
+   * computed over the current staging contents, so mutating staging without
+   * invalidating pending would produce a hash/content mismatch. Users who
+   * want to modify a pending commit should reject or push it first.
+   */
+  drop(index: number): DropResult {
+    if (this.pendingHash !== null) {
+      throw new Error(
+        `Cannot drop while pending commit exists (hash: ${this.pendingHash}). ` +
+        `Reject or push the pending commit first, then re-stage your ops.`
+      )
+    }
+    if (this.stagingArea.length === 0) {
+      throw new Error('staging buffer is empty, nothing to drop')
+    }
+    if (!Number.isInteger(index) || index < 0 || index >= this.stagingArea.length) {
+      throw new Error(
+        `index ${index} out of range, staged buffer has ${this.stagingArea.length} op(s)`
+      )
+    }
+    const [droppedOp] = this.stagingArea.splice(index, 1)
+    return {
+      dropped: true,
+      droppedOp,
+      remainingStagedCount: this.stagingArea.length,
+    }
   }
 
   async reject(reason?: string): Promise<RejectResult> {

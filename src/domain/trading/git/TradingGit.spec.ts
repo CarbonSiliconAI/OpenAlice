@@ -91,6 +91,71 @@ describe('TradingGit', () => {
     })
   })
 
+  // ==================== drop ====================
+
+  describe('drop', () => {
+    it('(a) drops op at index 0 when staged has 1 op', () => {
+      git.add(buyOp('NVDA'))
+      const result = git.drop(0)
+      expect(result.dropped).toBe(true)
+      expect(result.remainingStagedCount).toBe(0)
+      expect(result.droppedOp.action).toBe('placeOrder')
+      expect(git.status().staged).toHaveLength(0)
+    })
+
+    it('(b) drops op at index 1 when staged has 3 ops', () => {
+      git.add(buyOp('AAPL'))
+      git.add(buyOp('MSFT'))
+      git.add(buyOp('NVDA'))
+      const result = git.drop(1)
+      expect(result.remainingStagedCount).toBe(2)
+      expect(result.droppedOp.action).toBe('placeOrder')
+      // verify the right op was dropped: staged should now be [AAPL, NVDA]
+      const staged = git.status().staged
+      expect(staged).toHaveLength(2)
+      const symbols = staged.map((op) => ('contract' in op ? op.contract?.symbol : undefined))
+      expect(symbols).toEqual(['AAPL', 'NVDA'])
+    })
+
+    it('(c) throws on empty staging buffer', () => {
+      expect(() => git.drop(0)).toThrow(/empty/i)
+    })
+
+    it('(d) throws on negative index', () => {
+      git.add(buyOp())
+      expect(() => git.drop(-1)).toThrow(/out of range/i)
+    })
+
+    it('(e) throws on index === staged.length (out of range)', () => {
+      git.add(buyOp('AAPL'))
+      git.add(buyOp('MSFT'))
+      expect(() => git.drop(2)).toThrow(/out of range/i)
+    })
+
+    it('(f) drop does not affect ledger (head stays null when no prior commits)', () => {
+      git.add(buyOp('AAPL'))
+      git.add(buyOp('MSFT'))
+      const before = git.status()
+      git.drop(0)
+      const after = git.status()
+      expect(after.head).toBe(before.head) // null in both cases, no push happened
+      expect(after.commitCount).toBe(before.commitCount)
+      expect(after.pendingHash).toBeNull()
+      expect(after.pendingMessage).toBeNull()
+    })
+
+    it('(g) throws when pending commit exists (hash commitment invariant)', () => {
+      git.add(buyOp('AAPL'))
+      git.add(buyOp('MSFT'))
+      git.commit('batch-1')
+      expect(git.status().pendingHash).not.toBeNull()
+      expect(() => git.drop(0)).toThrow(/pending commit exists/i)
+      expect(() => git.drop(0)).toThrow(/reject or push/i)
+      // staging should still have both ops — drop refused to mutate
+      expect(git.status().staged).toHaveLength(2)
+    })
+  })
+
   // ==================== commit ====================
 
   describe('commit', () => {

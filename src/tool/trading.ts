@@ -441,6 +441,31 @@ Optional: attach takeProfit and/or stopLoss for automatic exit orders.`,
       },
     }),
 
+    tradingDrop: tool({
+      description: `Remove a single staged operation from the buffer by its zero-based index.
+Use tradingStatus first to see the current staged list and identify the op to drop.
+Does not affect pending commits, ledger, or broker state.
+This tool refuses to run while a pending commit exists; reject or push the pending commit first if you need to modify staging.
+Returns the dropped op details and the remaining staged count.`,
+      inputSchema: z.object({
+        source: z.string().describe(sourceDesc(true)),
+        index: z.number().int().min(0).describe('Zero-based index of op to drop from the staging buffer'),
+      }),
+      execute: ({ source, index }) => {
+        const uta = manager.resolveOne(source)
+        const result = uta.dropStaged(index)
+        return {
+          source: uta.id,
+          dropped: true,
+          droppedOp: {
+            action: result.droppedOp.action,
+            symbol: 'contract' in result.droppedOp ? (result.droppedOp.contract?.symbol ?? 'unknown') : 'n/a',
+          },
+          remainingStagedCount: result.remainingStagedCount,
+        }
+      },
+    }),
+
     tradingPush: tool({
       description: 'Trading push requires manual approval — call tradingStatus to show the user what is pending, then tell them to approve (via Web UI, Telegram /trading, or other connected channels).',
       inputSchema: z.object({

@@ -15,6 +15,7 @@ import type {
   Operation,
   AddResult,
   CommitPrepareResult,
+  DropResult,
   PushResult,
   RejectResult,
   GitStatus,
@@ -426,6 +427,11 @@ export class UnifiedTradingAccount {
     const result = await this.git.reject(reason)
     Promise.resolve(this._onPostReject?.(this.id)).catch(() => {})
     return result
+  }
+
+  /** Remove a single op from the staging buffer. Refuses while pending commit exists. */
+  dropStaged(index: number): DropResult {
+    return this.git.drop(index)
   }
 
   // ==================== Git queries ====================
