@@ -251,3 +251,55 @@ describe('createTradingTools — getOrders summarization', () => {
     expect(result['mock-paper|ETH'].orders).toHaveLength(1)
   })
 })
+
+// ==================== createTradingTools — getQuote aliceId resolution ====================
+
+describe('createTradingTools — getQuote', () => {
+  it('(a) parses aliceId to populate contract.symbol before dispatch', async () => {
+    const broker = new MockBroker({ id: 'acc1' })
+    broker.setQuote('AAPL', 200)   // default is 100; only resolved when symbol=AAPL lookup works
+    const mgr = makeManager(broker)
+    const tools = createTradingTools(mgr)
+
+    const exec = (tools.getQuote as { execute: (args: unknown) => Promise<unknown> }).execute
+    const result = await exec({ aliceId: 'acc1|AAPL', source: 'acc1' }) as Record<string, unknown>
+
+    // If .symbol wasn't populated from aliceId, MockBroker would fall back to
+    // default price 100. Getting 200 confirms symbol propagated.
+    expect(result.last).toBe(200)
+    expect(result.source).toBe('acc1')
+
+    // Verify the Contract object passed to broker had both aliceId and symbol set
+    const lastCall = broker.lastCall('getQuote')
+    expect(lastCall).not.toBeNull()
+    const contract = lastCall!.args[0] as { aliceId?: string; symbol?: string }
+    expect(contract.aliceId).toBe('acc1|AAPL')
+    expect(contract.symbol).toBe('AAPL')
+  })
+
+  it('(b) surfaces per-account errors in details[] when all accounts fail', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const broker = new MockBroker({ id: 'acc1' })
+    vi.spyOn(broker, 'getQuote').mockRejectedValue(new Error('stub failure'))
+    const mgr = makeManager(broker)
+    const tools = createTradingTools(mgr)
+
+    const exec = (tools.getQuote as { execute: (args: unknown) => Promise<unknown> }).execute
+    const result = await exec({ aliceId: 'acc1|AAPL', source: 'acc1' }) as Record<string, unknown>
+
+    expect(result.error).toMatch(/No account could quote aliceId "acc1\|AAPL"/)
+    const details = result.details as Array<{ source: string; error: string }>
+    expect(details).toHaveLength(1)
+    expect(details[0].source).toBe('acc1')
+    expect(details[0].error).toContain('stub failure')
+
+    // console.warn was called with symbol + source + reason
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    const warnArg = warnSpy.mock.calls[0][0] as string
+    expect(warnArg).toContain('[getQuote]')
+    expect(warnArg).toContain('acc1')
+    expect(warnArg).toContain('acc1|AAPL')
+    expect(warnArg).toContain('stub failure')
+    warnSpy.mockRestore()
+  })
+})

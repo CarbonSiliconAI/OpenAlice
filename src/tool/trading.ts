@@ -257,13 +257,30 @@ If this tool returns an error with transient=true, wait a few seconds and retry 
       execute: async ({ aliceId, source }) => {
         const targets = manager.resolve(source)
         if (targets.length === 0) return { error: 'No accounts available.' }
+
         const query = new Contract()
         query.aliceId = aliceId
+        // Parse accountId|nativeKey and populate .symbol so broker-side
+        // resolvers (e.g. AlpacaBroker.resolveSymbol) that read .symbol
+        // directly can dispatch. Without this the broker throws
+        // "Cannot resolve contract to Alpaca symbol".
+        const parts = aliceId.split('|')
+        if (parts.length === 2 && parts[1]) query.symbol = parts[1]
+
         const results: Array<Record<string, unknown>> = []
+        const errors: Array<{ source: string; error: string }> = []
         for (const uta of targets) {
-          try { results.push({ source: uta.id, ...await uta.getQuote(query) }) } catch { /* skip */ }
+          try {
+            results.push({ source: uta.id, ...await uta.getQuote(query) })
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            console.warn(`[getQuote] ${uta.id} failed for aliceId=${aliceId}: ${msg}`)
+            errors.push({ source: uta.id, error: msg })
+          }
         }
-        if (results.length === 0) return { error: `No account could quote aliceId "${aliceId}".` }
+        if (results.length === 0) {
+          return { error: `No account could quote aliceId "${aliceId}".`, details: errors }
+        }
         return results.length === 1 ? results[0] : results
       },
     }),
