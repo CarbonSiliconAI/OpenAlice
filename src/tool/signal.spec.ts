@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
@@ -217,6 +217,75 @@ describe('readSignal tool', () => {
     const summary = result.summary as { pair_trades_count: number; baskets_count: number }
     expect(summary.pair_trades_count).toBe(0)
     expect(summary.baskets_count).toBe(0)
+  })
+
+  it('(k) HTTP mode: 200 with valid KK fixture → found:true with pair_trades', async () => {
+    const fixturePath = join(homedir(), 'Projects/signal-pipeline/tests/fixtures/kk_sample_signal.json')
+    if (!existsSync(fixturePath)) return
+    const { readFileSync } = await import('node:fs')
+    const body = readFileSync(fixturePath, 'utf-8')
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })
+    )
+    try {
+      const tools = createSignalTools('http://localhost:9999/signals')
+      const result = await invokeReadSignal(tools.readSignal, { date: '2026-04-23' }) as Record<string, unknown>
+      expect(result.found).toBe(true)
+      expect(result.error).toBeUndefined()
+      const signal = result.signal as { pair_trades: unknown[] }
+      expect(signal.pair_trades).toHaveLength(1)
+      // verify the URL requested
+      expect(fetchSpy).toHaveBeenCalledOnce()
+      const calledUrl = fetchSpy.mock.calls[0][0] as string
+      expect(calledUrl).toBe('http://localhost:9999/signals/2026-04-23.json')
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it('(l) HTTP mode: 404 → found:false with "No signal at..." error', async () => {
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(
+      new Response('not found', { status: 404 })
+    )
+    try {
+      const tools = createSignalTools('https://kk.example.com/signals')
+      const result = await invokeReadSignal(tools.readSignal, { date: '2099-12-31' }) as Record<string, unknown>
+      expect(result.found).toBe(false)
+      expect(result.error).toContain('No signal at https://kk.example.com/signals/2099-12-31.json')
+      expect(result.path).toBe('https://kk.example.com/signals/2099-12-31.json')
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it('(m) HTTP mode: network error → found:false with "Network error" message', async () => {
+    const fetchSpy = vi.spyOn(global, 'fetch').mockRejectedValue(
+      new TypeError('fetch failed: ECONNREFUSED')
+    )
+    try {
+      const tools = createSignalTools('http://localhost:1/signals')
+      const result = await invokeReadSignal(tools.readSignal, { date: '2026-04-23' }) as Record<string, unknown>
+      expect(result.found).toBe(false)
+      expect(result.error).toMatch(/Network error reaching http:\/\/localhost:1\/signals\/2026-04-23\.json/)
+      expect(result.error).toContain('ECONNREFUSED')
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it('(n) HTTP mode: 200 with malformed JSON → found:true with "Invalid JSON" error', async () => {
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(
+      new Response('{ this is not valid json', { status: 200 })
+    )
+    try {
+      const tools = createSignalTools('http://localhost:9999')
+      const result = await invokeReadSignal(tools.readSignal, { date: '2026-04-23' }) as Record<string, unknown>
+      expect(result.found).toBe(true)
+      expect(result.error).toMatch(/invalid JSON/i)
+      expect(result.signal).toBeUndefined()
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 
   it('expandHome resolves ~/ prefix to absolute path', () => {

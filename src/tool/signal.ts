@@ -131,14 +131,80 @@ export function expandHome(p: string): string {
 }
 
 /** Today's date in UTC as YYYY-MM-DD. */
-function todayUtcYmd(): string {
+export function todayUtcYmd(): string {
   return new Date().toISOString().slice(0, 10)
+}
+
+/** HTTP timeout for remote signal fetches. */
+const SIGNAL_HTTP_TIMEOUT_MS = 10_000
+
+/** Result type for fetchRawSignal — keeps callers honest about the failure shape. */
+export type SignalFetchResult =
+  | { kind: 'ok'; path: string; raw: string }
+  | { kind: 'not_found'; path: string; message: string }
+  | { kind: 'network_error'; path: string; message: string }
+
+/**
+ * Load the raw signal-file content for `date` from `basePath`.
+ * basePath starting with http:// or https:// → HTTP fetch mode (10s timeout).
+ * Otherwise → local filesystem (supports ~/ expansion).
+ *
+ * Returns a tagged result so callers can distinguish "no signal yet" (not_found)
+ * from transient failures (network_error) from successful payloads (ok).
+ * Parse + schema validation happen downstream — this helper only does I/O.
+ */
+export async function fetchRawSignal(basePath: string, date: string): Promise<SignalFetchResult> {
+  const isHttp = /^https?:\/\//i.test(basePath)
+  if (isHttp) {
+    const url = basePath.replace(/\/+$/, '') + `/${date}.json`
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(SIGNAL_HTTP_TIMEOUT_MS),
+      })
+      if (res.status === 404) {
+        return { kind: 'not_found', path: url, message: `No signal at ${url}` }
+      }
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        return {
+          kind: 'network_error',
+          path: url,
+          message: `HTTP ${res.status} from ${url}${body ? ': ' + body.slice(0, 200) : ''}`,
+        }
+      }
+      const raw = await res.text()
+      return { kind: 'ok', path: url, raw }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { kind: 'network_error', path: url, message: `Network error reaching ${url}: ${msg}` }
+    }
+  }
+
+  // Local filesystem mode
+  const baseDir = resolve(expandHome(basePath))
+  const filePath = join(baseDir, `${date}.json`)
+  try {
+    const raw = await readFile(filePath, 'utf-8')
+    return { kind: 'ok', path: filePath, raw }
+  } catch (err: unknown) {
+    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return {
+        kind: 'not_found',
+        path: filePath,
+        message: `No signal file for ${date}. The signal-pipeline may not have run yet for this date — try a different --date, or run the generator in the signal-pipeline project first.`,
+      }
+    }
+    throw err
+  }
 }
 
 // ==================== Factory ====================
 
-export function createSignalTools(signalDir: string): Record<string, Tool> {
-  const baseDir = resolve(expandHome(signalDir))
+export function createSignalTools(signalSource: string): Record<string, Tool> {
+  // Store raw signalSource — http/https URLs must NOT be resolved as paths.
+  // fetchRawSignal does filesystem resolution (expandHome + resolve) at call time.
+  const basePath = signalSource
 
   return {
     readSignal: tool({
@@ -158,7 +224,9 @@ pair_trades and long_short_baskets use an action field (OPEN/CLOSE/REBALANCE/HOL
 
 strategy_source on each entry identifies which upstream generator produced it (e.g., 'simple-ma-crossover', 'kk-ai-displacement-pair'). When reporting to user, group by strategy_source so user can evaluate each generator's contribution independently.
 
-The tool returns the full SignalReport plus a compact summary. If no signal file exists for the date, it returns {found: false, error: ...} so you know there is nothing to act on.`,
+The tool returns the full SignalReport plus a compact summary. If no signal file exists for the date, it returns {found: false, error: ...} so you know there is nothing to act on.
+
+Signal source may be local filesystem or remote HTTP endpoint — transparent to caller. Remote endpoints handle network failures gracefully with timeout.`,
       inputSchema: z.object({
         date: z.string()
           .regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD')
@@ -167,29 +235,23 @@ The tool returns the full SignalReport plus a compact summary. If no signal file
       }),
       execute: async ({ date }) => {
         const targetDate = date ?? todayUtcYmd()
-        const signalPath = join(baseDir, `${targetDate}.json`)
-        let raw: string
-        try {
-          raw = await readFile(signalPath, 'utf-8')
-        } catch (err: unknown) {
-          if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
-            return {
-              found: false,
-              path: signalPath,
-              error: `No signal file for ${targetDate}. The signal-pipeline may not have run yet for this date — try a different --date, or run the generator in the signal-pipeline project first.`,
-            }
-          }
-          throw err
+        const fetched = await fetchRawSignal(basePath, targetDate)
+
+        if (fetched.kind === 'not_found') {
+          return { found: false, path: fetched.path, error: fetched.message }
+        }
+        if (fetched.kind === 'network_error') {
+          return { found: false, path: fetched.path, error: fetched.message }
         }
 
         let parsed: unknown
         try {
-          parsed = JSON.parse(raw)
+          parsed = JSON.parse(fetched.raw)
         } catch (err) {
           return {
             found: true,
-            path: signalPath,
-            error: `Signal file exists but contains invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
+            path: fetched.path,
+            error: `Signal source returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
           }
         }
 
@@ -197,8 +259,8 @@ The tool returns the full SignalReport plus a compact summary. If no signal file
         if (!validation.success) {
           return {
             found: true,
-            path: signalPath,
-            error: `Signal file failed schema validation. The signal-pipeline may have emitted a malformed payload. Details: ${validation.error.message}`,
+            path: fetched.path,
+            error: `Signal payload failed schema validation. The generator may have emitted a malformed response. Details: ${validation.error.message}`,
           }
         }
 
@@ -208,7 +270,7 @@ The tool returns the full SignalReport plus a compact summary. If no signal file
 
         return {
           found: true,
-          path: signalPath,
+          path: fetched.path,
           signal,
           summary: {
             date: signal.date,

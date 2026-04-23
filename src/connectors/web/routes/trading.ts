@@ -1,12 +1,11 @@
 import { Hono } from 'hono'
 import type { Context } from 'hono'
-import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join, resolve as resolvePath } from 'node:path'
+import { join } from 'node:path'
 import type { EngineContext } from '../../../core/types.js'
 import { BrokerError } from '../../../domain/trading/brokers/types.js'
 import type { UnifiedTradingAccount } from '../../../domain/trading/UnifiedTradingAccount.js'
-import { signalReportSchema, expandHome } from '../../../tool/signal.js'
+import { signalReportSchema, fetchRawSignal } from '../../../tool/signal.js'
 
 /** Resolve account by :id param, return 404 if not found. */
 function resolveAccount(ctx: EngineContext, c: Context): UnifiedTradingAccount | null {
@@ -219,34 +218,31 @@ export function createTradingRoutes(ctx: EngineContext) {
 
   // ==================== Signal-pipeline read-only bridge ====================
 
-  const signalDir = resolvePath(expandHome(
-    process.env.SIGNAL_PIPELINE_PATH?.trim() || join(homedir(), 'Projects/signal-pipeline/signals')
-  ))
+  // Raw basePath — may be a local directory or an http(s):// URL.
+  // Scheme detection + expansion happens inside fetchRawSignal at request time.
+  const signalBasePath = process.env.SIGNAL_PIPELINE_PATH?.trim() || join(homedir(), 'Projects/signal-pipeline/signals')
 
   /** GET /api/trading/signal/:date? — defaults to today (UTC) when :date omitted. */
   const readSignalFile = async (c: Context, date: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       return c.json({ error: 'date must be YYYY-MM-DD' }, 400)
     }
-    const path = join(signalDir, `${date}.json`)
-    let raw: string
-    try {
-      raw = await readFile(path, 'utf-8')
-    } catch (err: unknown) {
-      if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return c.json({ found: false, path, error: `No signal file for ${date}` }, 404)
-      }
-      return c.json({ error: String(err) }, 500)
+    const fetched = await fetchRawSignal(signalBasePath, date)
+    if (fetched.kind === 'not_found') {
+      return c.json({ found: false, path: fetched.path, error: fetched.message }, 404)
+    }
+    if (fetched.kind === 'network_error') {
+      return c.json({ found: false, path: fetched.path, error: fetched.message }, 502)
     }
     let parsed: unknown
-    try { parsed = JSON.parse(raw) } catch (err) {
-      return c.json({ found: true, path, error: `Invalid JSON: ${err instanceof Error ? err.message : String(err)}` }, 422)
+    try { parsed = JSON.parse(fetched.raw) } catch (err) {
+      return c.json({ found: true, path: fetched.path, error: `Invalid JSON: ${err instanceof Error ? err.message : String(err)}` }, 422)
     }
     const validation = signalReportSchema.safeParse(parsed)
     if (!validation.success) {
-      return c.json({ found: true, path, error: 'Schema validation failed', details: validation.error.message }, 422)
+      return c.json({ found: true, path: fetched.path, error: 'Schema validation failed', details: validation.error.message }, 422)
     }
-    return c.json({ found: true, path, signal: validation.data })
+    return c.json({ found: true, path: fetched.path, signal: validation.data })
   }
 
   app.get('/signal/:date', (c) => readSignalFile(c, c.req.param('date')))
