@@ -26,7 +26,10 @@ import type {
   FuturesHistoricalData, FuturesCurveData, FuturesInfoData, FuturesInstrumentsData,
   OptionsChainsData, OptionsSnapshotsData, OptionsUnusualData,
   // Commodity
-  CommoditySpotPriceData,
+  CommoditySpotPriceData, PetroleumStatusReportData, ShortTermEnergyOutlookData,
+  // Economy (FRED + BLS)
+  FredSearchData, FredSeriesData, FredRegionalData,
+  BlsSearchData, BlsSeriesData,
 } from '@traderalice/opentypebb'
 
 export interface EquityClientLike {
@@ -80,6 +83,21 @@ export interface IndexClientLike {
 
 export interface CommodityClientLike {
   getSpotPrices(params: Record<string, unknown>): Promise<CommoditySpotPriceData[]>
+  // EIA endpoints — semantically macro/economy data, but OpenBB upstream
+  // routes them under /commodity/* (output is oil/gas prices + inventories).
+  // The SDK clients carry them; the tool layer surfaces them under
+  // tool/economy.ts so AI agents see one coherent macro namespace.
+  getPetroleumStatus(params: Record<string, unknown>): Promise<PetroleumStatusReportData[]>
+  getEnergyOutlook(params: Record<string, unknown>): Promise<ShortTermEnergyOutlookData[]>
+}
+
+export interface EconomyClientLike {
+  fredSearch(params: Record<string, unknown>): Promise<FredSearchData[]>
+  fredSeries(params: Record<string, unknown>): Promise<FredSeriesData[]>
+  fredRegional(params: Record<string, unknown>): Promise<FredRegionalData[]>
+  // BLS — Bureau of Labor Statistics, mounted under /economy/survey/* upstream
+  getBlsSearch(params: Record<string, unknown>): Promise<BlsSearchData[]>
+  getBlsSeries(params: Record<string, unknown>): Promise<BlsSeriesData[]>
 }
 
 export interface DerivativesClientLike {

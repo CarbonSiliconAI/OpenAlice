@@ -9,6 +9,7 @@ import { amakeRequest } from '../../../core/provider/utils/helpers.js'
 import { EmptyDataError } from '../../../core/provider/utils/errors.js'
 
 const FRED_BASE = 'https://api.stlouisfed.org/fred'
+const GEOFRED_BASE = 'https://api.stlouisfed.org/geofred'
 
 export interface FredObservation {
   date: string
@@ -27,13 +28,17 @@ export interface FredSeriesInfo {
 
 /**
  * Build a FRED API URL with common parameters.
+ *
+ * Pass `base` to target a sibling API tree on api.stlouisfed.org —
+ * GeoFRED is at /geofred/... (no /fred/ prefix), not under /fred/geofred/.
  */
 function buildFredUrl(
   endpoint: string,
   params: Record<string, string | number | undefined>,
   apiKey: string,
+  base: string = FRED_BASE,
 ): string {
-  const url = new URL(`${FRED_BASE}/${endpoint}`)
+  const url = new URL(`${base}/${endpoint}`)
   url.searchParams.set('file_type', 'json')
   if (apiKey) url.searchParams.set('api_key', apiKey)
   for (const [k, v] of Object.entries(params)) {
@@ -46,6 +51,13 @@ function buildFredUrl(
 
 /**
  * Fetch observations for a single FRED series.
+ *
+ * When the caller supplies `limit` without an explicit start date,
+ * "limit N" means "the latest N observations" — fetch desc and reverse
+ * to ascending so downstream date-based merges keep working. Asking
+ * upstream desc + reversing is what aligns with the OpenBB Python
+ * upstream and with user intuition; the prior asc default returned
+ * 1946-era observations for any limited query without an anchor date.
  */
 export async function fetchFredSeries(
   seriesId: string,
@@ -59,18 +71,23 @@ export async function fetchFredSeries(
     units?: string
   } = {},
 ): Promise<FredObservation[]> {
+  const sortOrder = opts.sortOrder ?? 'desc'
   const url = buildFredUrl('series/observations', {
     series_id: seriesId,
     observation_start: opts.startDate ?? undefined,
     observation_end: opts.endDate ?? undefined,
     limit: opts.limit,
-    sort_order: opts.sortOrder ?? 'asc',
+    sort_order: sortOrder,
     frequency: opts.frequency,
     units: opts.units,
   }, apiKey)
 
   const data = await amakeRequest<{ observations?: FredObservation[] }>(url)
-  return (data.observations ?? []).filter(o => o.value !== '.')
+  const observations = (data.observations ?? []).filter(o => o.value !== '.')
+  // Caller-facing contract is ascending. If the upstream call ran desc,
+  // reverse before returning so multiSeriesToRecords' localeCompare and
+  // any date-ordered consumer keeps the same shape as before.
+  return sortOrder === 'desc' ? observations.reverse() : observations
 }
 
 /**
@@ -151,9 +168,14 @@ export async function fredReleaseTableApi(
 
 /**
  * Fetch FRED regional/GeoFRED data.
+ *
+ * GeoFRED lives at api.stlouisfed.org/geofred/... — a sibling tree of
+ * /fred/, not a child. The endpoint takes `series_id` (e.g. WIPCPI for
+ * per-capita income), and returns data nested under `meta.data`, keyed
+ * by observation date.
  */
 export async function fredRegionalApi(
-  seriesGroup: string,
+  seriesId: string,
   apiKey: string,
   opts: {
     regionType?: string
@@ -165,8 +187,8 @@ export async function fredRegionalApi(
     transformationCode?: string
   } = {},
 ): Promise<Record<string, unknown>[]> {
-  const url = buildFredUrl('geofred/series/data', {
-    series_group: seriesGroup,
+  const url = buildFredUrl('series/data', {
+    series_id: seriesId,
     region_type: opts.regionType ?? 'state',
     date: opts.date,
     start_date: opts.startDate,
@@ -174,14 +196,15 @@ export async function fredRegionalApi(
     units: opts.units,
     frequency: opts.frequency,
     transformation: opts.transformationCode,
-  }, apiKey)
+  }, apiKey, GEOFRED_BASE)
 
-  const data = await amakeRequest<{ meta?: Record<string, unknown>; data?: Record<string, unknown> }>(url)
-  if (!data.data) return []
+  const data = await amakeRequest<{ meta?: { data?: Record<string, unknown> } }>(url)
+  const dataMap = data.meta?.data
+  if (!dataMap) return []
 
-  // GeoFRED returns { data: { "2024-01-01": [{ region: ..., value: ... }, ...] } }
+  // GeoFRED returns { meta: { data: { "2024-01-01": [{ region, code, value, series_id }, ...] } } }
   const results: Record<string, unknown>[] = []
-  for (const [date, regions] of Object.entries(data.data)) {
+  for (const [date, regions] of Object.entries(dataMap)) {
     if (Array.isArray(regions)) {
       for (const region of regions) {
         results.push({ date, ...(region as Record<string, unknown>) })
@@ -214,8 +237,17 @@ export function multiSeriesToRecords(
 }
 
 /**
- * Get credentials helper — extracts FRED API key.
+ * Get credentials helper — extracts the FRED API key.
+ *
+ * The SDK path delivers the key as `federal_reserve_api_key` (the
+ * provider-prefixed form, see Provider constructor). Older callers
+ * and direct helper invocations may still pass `fred_api_key` or
+ * `api_key`; keep them as fallback so this helper stays compatible
+ * with both call sites.
  */
 export function getFredApiKey(credentials: Record<string, string> | null): string {
-  return credentials?.fred_api_key ?? credentials?.api_key ?? ''
+  return credentials?.federal_reserve_api_key
+      ?? credentials?.fred_api_key
+      ?? credentials?.api_key
+      ?? ''
 }

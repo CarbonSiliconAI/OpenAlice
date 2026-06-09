@@ -1,20 +1,23 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../api'
-import type { AccountConfig, ReconnectResult } from '../api/types'
+import type { UTAConfig, ReconnectResult } from '../api/types'
 
 export interface UseTradingConfigResult {
-  accounts: AccountConfig[]
+  utas: UTAConfig[]
   loading: boolean
   error: string | null
 
-  saveAccount: (a: AccountConfig) => Promise<void>
-  deleteAccount: (id: string) => Promise<void>
-  reconnectAccount: (id: string) => Promise<ReconnectResult>
+  /** Create a new UTA — server derives id from preset + presetConfig. */
+  createUTA: (a: Omit<UTAConfig, 'id'>) => Promise<UTAConfig>
+  /** Edit an existing UTA. Will fail with 422 if the id doesn't exist. */
+  saveUTA: (a: UTAConfig) => Promise<void>
+  deleteUTA: (id: string) => Promise<void>
+  reconnectUTA: (id: string) => Promise<ReconnectResult>
   refresh: () => Promise<void>
 }
 
 export function useTradingConfig(): UseTradingConfigResult {
-  const [accounts, setAccounts] = useState<AccountConfig[]>([])
+  const [utas, setUTAs] = useState<UTAConfig[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -23,7 +26,7 @@ export function useTradingConfig(): UseTradingConfigResult {
       setLoading(true)
       setError(null)
       const data = await api.trading.loadTradingConfig()
-      setAccounts(data.accounts)
+      setUTAs(data.utas)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -33,9 +36,15 @@ export function useTradingConfig(): UseTradingConfigResult {
 
   useEffect(() => { load() }, [load])
 
-  const saveAccount = useCallback(async (a: AccountConfig) => {
-    await api.trading.upsertAccount(a)
-    setAccounts((prev) => {
+  const createUTA = useCallback(async (a: Omit<UTAConfig, 'id'>): Promise<UTAConfig> => {
+    const created = await api.trading.createUTA(a)
+    setUTAs((prev) => [...prev, created])
+    return created
+  }, [])
+
+  const saveUTA = useCallback(async (a: UTAConfig) => {
+    await api.trading.upsertUTA(a)
+    setUTAs((prev) => {
       const idx = prev.findIndex((x) => x.id === a.id)
       if (idx >= 0) {
         const next = [...prev]
@@ -46,18 +55,18 @@ export function useTradingConfig(): UseTradingConfigResult {
     })
   }, [])
 
-  const deleteAccount = useCallback(async (id: string) => {
-    await api.trading.deleteAccount(id)
-    setAccounts((prev) => prev.filter((a) => a.id !== id))
+  const deleteUTA = useCallback(async (id: string) => {
+    await api.trading.deleteUTA(id)
+    setUTAs((prev) => prev.filter((a) => a.id !== id))
   }, [])
 
-  const reconnectAccount = useCallback(async (id: string): Promise<ReconnectResult> => {
-    return api.trading.reconnectAccount(id)
+  const reconnectUTA = useCallback(async (id: string): Promise<ReconnectResult> => {
+    return api.trading.reconnectUTA(id)
   }, [])
 
   return {
-    accounts, loading, error,
-    saveAccount, deleteAccount,
-    reconnectAccount, refresh: load,
+    utas, loading, error,
+    createUTA, saveUTA, deleteUTA,
+    reconnectUTA, refresh: load,
   }
 }

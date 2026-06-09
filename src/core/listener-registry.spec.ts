@@ -223,13 +223,13 @@ describe('ListenerRegistry', () => {
       registry.register({
         name: 'cron-echo',
         subscribes: 'cron.fire',
-        emits: ['cron.done'] as const,
-        async handle(entry, ctx) {
-          await ctx.emit('cron.done', {
-            jobId: entry.payload.jobId,
-            jobName: entry.payload.jobName,
+        emits: ['agent.work.done'] as const,
+        async handle(_entry, ctx) {
+          await ctx.emit('agent.work.done', {
+            source: 'cron',
             reply: 'ok',
             durationMs: 10,
+            delivered: true,
           })
         },
       })
@@ -240,10 +240,10 @@ describe('ListenerRegistry', () => {
       })
       await flush()
 
-      const done = eventLog.recent({ type: 'cron.done' })
+      const done = eventLog.recent({ type: 'agent.work.done' })
       expect(done).toHaveLength(1)
       expect(done[0].causedBy).toBe(parent.seq)
-      expect(done[0].payload).toMatchObject({ jobId: 'j1', reply: 'ok' })
+      expect(done[0].payload).toMatchObject({ source: 'cron', reply: 'ok' })
     })
 
     it('should reject emit of un-declared event type at runtime', async () => {
@@ -254,12 +254,12 @@ describe('ListenerRegistry', () => {
         registry.register({
           name: 'naughty',
           subscribes: 'cron.fire',
-          emits: ['cron.done'] as const,
+          emits: ['agent.work.done'] as const,
           async handle(_entry, ctx) {
             // Cast past the type system to simulate a misuse
             await (ctx.emit as unknown as (t: string, p: unknown) => Promise<unknown>)(
-              'heartbeat.done',
-              { reply: 'x', reason: '', durationMs: 0, delivered: false },
+              'message.sent',
+              { channel: 'web', to: 'x', prompt: 'p', reply: 'r', durationMs: 0 },
             )
           },
         })
@@ -271,7 +271,7 @@ describe('ListenerRegistry', () => {
         // Error was caught by registry's error isolation and logged
         expect(errors.length).toBeGreaterThan(0)
         const msg = String((errors[0] as unknown[])[1])
-        expect(msg).toMatch(/naughty.*heartbeat\.done.*declared emits.*cron\.done/)
+        expect(msg).toMatch(/naughty.*message\.sent.*declared emits.*agent\.work\.done/)
       } finally {
         console.error = origErr
       }
@@ -287,8 +287,8 @@ describe('ListenerRegistry', () => {
           subscribes: 'cron.fire',
           async handle(_entry, ctx) {
             await (ctx.emit as unknown as (t: string, p: unknown) => Promise<unknown>)(
-              'cron.done',
-              { jobId: '', jobName: '', reply: '', durationMs: 0 },
+              'agent.work.done',
+              { source: 'cron', reply: '', durationMs: 0, delivered: false },
             )
           },
         })
@@ -309,11 +309,11 @@ describe('ListenerRegistry', () => {
       registry.register({
         name: 'cron-override',
         subscribes: 'cron.fire',
-        emits: ['cron.done'] as const,
+        emits: ['agent.work.done'] as const,
         async handle(_entry, ctx) {
           await ctx.emit(
-            'cron.done',
-            { jobId: 'j1', jobName: 'x', reply: 'ok', durationMs: 0 },
+            'agent.work.done',
+            { source: 'cron', reply: 'ok', durationMs: 0, delivered: true },
             { causedBy: 999 },
           )
         },
@@ -323,7 +323,7 @@ describe('ListenerRegistry', () => {
       await eventLog.append('cron.fire', { jobId: 'j1', jobName: 'x', payload: 'p' })
       await flush()
 
-      const [done] = eventLog.recent({ type: 'cron.done' })
+      const [done] = eventLog.recent({ type: 'agent.work.done' })
       expect(done.causedBy).toBe(999)
     })
   })
@@ -433,12 +433,12 @@ describe('ListenerRegistry', () => {
 
       await eventLog.append('cron.fire', { jobId: 'j', jobName: 'x', payload: 'p' })
       await eventLog.append('message.received', { channel: 'web', to: 'default', prompt: 'hi' })
-      await eventLog.append('heartbeat.skip', { reason: 'test' })
+      await eventLog.append('agent.work.skip', { source: 'heartbeat', reason: 'test' })
       await flush()
 
       expect(seenTypes.has('cron.fire')).toBe(true)
       expect(seenTypes.has('message.received')).toBe(true)
-      expect(seenTypes.has('heartbeat.skip')).toBe(true)
+      expect(seenTypes.has('agent.work.skip')).toBe(true)
     })
 
     it('should ignore events not in AgentEventMap', async () => {
@@ -468,12 +468,12 @@ describe('ListenerRegistry', () => {
         name: 'router',
         subscribes: 'cron.fire',
         emits: '*',
-        async handle(entry, ctx) {
-          await ctx.emit('cron.done', {
-            jobId: entry.payload.jobId,
-            jobName: entry.payload.jobName,
+        async handle(_entry, ctx) {
+          await ctx.emit('agent.work.done', {
+            source: 'cron',
             reply: 'ok',
             durationMs: 1,
+            delivered: true,
           })
         },
       })
@@ -482,7 +482,7 @@ describe('ListenerRegistry', () => {
       await eventLog.append('cron.fire', { jobId: 'j', jobName: 'x', payload: 'p' })
       await flush()
 
-      const done = eventLog.recent({ type: 'cron.done' })
+      const done = eventLog.recent({ type: 'agent.work.done' })
       expect(done).toHaveLength(1)
     })
 
@@ -552,8 +552,8 @@ describe('ListenerRegistry', () => {
       })
       await expect(
         (handle.emit as unknown as (t: string, p: unknown) => Promise<unknown>)(
-          'heartbeat.done',
-          { jobId: 'j', durationMs: 1 },
+          'agent.work.done',
+          { source: 'cron', reply: 'x', durationMs: 1, delivered: false },
         ),
       ).rejects.toThrow(/cron-engine.*declared emits/)
     })

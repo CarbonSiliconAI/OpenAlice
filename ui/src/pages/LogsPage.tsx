@@ -1,14 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { api, type EventLogEntry, type ToolCallRecord } from '../api'
-import { useSSE } from '../hooks/useSSE'
-import { PageHeader } from '../components/PageHeader'
+import { getIntlLocale } from '../lib/intl'
 
 // ==================== Helpers ====================
 
 function formatDateTime(ts: number): string {
   const d = new Date(ts)
-  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  const time = d.toLocaleTimeString('en-US', { hour12: false })
+  const date = d.toLocaleDateString(getIntlLocale(), { month: 'short', day: 'numeric' })
+  const time = d.toLocaleTimeString(getIntlLocale(), { hour12: false })
   return `${date} ${time}`
 }
 
@@ -87,27 +86,17 @@ function EventLogSection() {
     }
   }, [entries])
 
-  // SSE for real-time events — only affects page 1
-  useSSE({
-    url: '/api/events/stream',
-    onMessage: (entry: EventLogEntry) => {
-      // Always track new types
-      setTypes((prev) => {
-        if (prev.includes(entry.type)) return prev
-        return [...prev, entry.type].sort()
-      })
-      // Increment total
-      setTotal((prev) => prev + 1)
-      // Only prepend to visible list when on page 1 and matching filter
-      if (page === 1) {
-        const matchesFilter = !typeFilter || entry.type === typeFilter
-        if (matchesFilter) {
-          setEntries((prev) => [entry, ...prev].slice(0, EVENT_PAGE_SIZE))
-        }
-      }
-    },
-    enabled: !paused,
-  })
+  // Live updates via polling — refetch page 1 every 3s while not paused.
+  // Older pages don't poll (user is browsing history; not jumping back).
+  // Matches ToolCallLogSection's pattern below; the events log doesn't
+  // need sub-second freshness — a 3s gap on a debug screen is fine.
+  useEffect(() => {
+    if (paused || page !== 1) return
+    const interval = setInterval(() => {
+      fetchPage(1, typeFilter || undefined)
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [paused, page, typeFilter, fetchPage])
 
   // Type filter change → reset to page 1
   const handleTypeChange = useCallback((type: string) => {
@@ -305,24 +294,15 @@ function ToolCallLogSection() {
     }
   }, [entries])
 
-  // SSE real-time updates
-  useSSE({
-    url: '/api/agent-status/stream',
-    onMessage: (record: ToolCallRecord) => {
-      setToolNames((prev) => {
-        if (prev.includes(record.name)) return prev
-        return [...prev, record.name].sort()
-      })
-      setTotal((prev) => prev + 1)
-      if (page === 1) {
-        const matchesFilter = !nameFilter || record.name === nameFilter
-        if (matchesFilter) {
-          setEntries((prev) => [record, ...prev].slice(0, TOOL_PAGE_SIZE))
-        }
-      }
-    },
-    enabled: !paused,
-  })
+  // Live updates via polling — refetch page 1 every 3s while not paused.
+  // Older pages don't poll (user is browsing history; not jumping back).
+  useEffect(() => {
+    if (paused || page !== 1) return
+    const interval = setInterval(() => {
+      fetchPage(1, nameFilter || undefined)
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [paused, page, nameFilter, fetchPage])
 
   const handleNameChange = useCallback((name: string) => {
     setNameFilter(name)
@@ -496,8 +476,6 @@ export function LogsPage() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <PageHeader title="Logs" />
-
       <div className="px-4 md:px-6 border-b border-border/60">
         <div className="flex gap-1">
           {TABS.map((t) => (

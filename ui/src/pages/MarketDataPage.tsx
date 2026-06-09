@@ -25,14 +25,12 @@ const ASSET_LABELS: Record<string, string> = {
 }
 
 const ALL_PROVIDERS = [
-  { key: 'fmp', name: 'FMP', desc: 'Equity, crypto, currency, ETF, index — fundamentals, calendars, discovery.', hint: 'financialmodelingprep.com' },
-  { key: 'fred', name: 'FRED', desc: 'Federal Reserve Economic Data — CPI, GDP, interest rates, macro indicators.', hint: 'Free — fredaccount.stlouisfed.org/apikeys' },
-  { key: 'bls', name: 'BLS', desc: 'Bureau of Labor Statistics — employment, payrolls, wages, CPI.', hint: 'Free — registrationapps.bls.gov/bls_registration' },
-  { key: 'eia', name: 'EIA', desc: 'Energy Information Administration — petroleum status, energy reports.', hint: 'Free — eia.gov/opendata' },
-  { key: 'econdb', name: 'EconDB', desc: 'Global macro indicators, country profiles, shipping data.', hint: 'Optional — econdb.com' },
-  { key: 'intrinio', name: 'Intrinio', desc: 'Options snapshots, equity data.', hint: 'intrinio.com' },
-  { key: 'nasdaq', name: 'Nasdaq', desc: 'Nasdaq Data Link — dividend/earnings calendars, short interest.', hint: 'data.nasdaq.com' },
-  { key: 'tradingeconomics', name: 'Trading Economics', desc: '20M+ indicators across 196 countries, economic calendar.', hint: 'tradingeconomics.com' },
+  { key: 'fmp', name: 'FMP', desc: 'Equity, crypto, currency, commodity, ETF, index — fundamentals, calendars, discovery.', hint: 'financialmodelingprep.com' },
+  { key: 'fred', name: 'FRED', desc: 'Federal Reserve Economic Data — CPI, GDP, interest rates, macro indicators.', hint: 'Free — fred.stlouisfed.org → My Account → API Keys' },
+  { key: 'bls', name: 'BLS', desc: 'Bureau of Labor Statistics — employment, payrolls, wages, CPI.', hint: 'Free — data.bls.gov/registrationEngine/' },
+  { key: 'eia', name: 'EIA', desc: 'Energy Information Administration — petroleum status, energy reports.', hint: 'Free — eia.gov/opendata/register.php' },
+  { key: 'econdb', name: 'EconDB', desc: 'Global macro indicators, country profiles, shipping data.', hint: 'Required (free signup) — econdb.com' },
+  { key: 'intrinio', name: 'Intrinio', desc: 'Equities, ETFs, fundamentals, news, options snapshots.', hint: 'intrinio.com' },
 ] as const
 
 // ==================== Test Button ====================

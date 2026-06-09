@@ -1,9 +1,11 @@
 import { z } from 'zod'
-import { readFile, writeFile, mkdir, unlink } from 'fs/promises'
+import { readFile, writeFile, mkdir, unlink, rm } from 'fs/promises'
 import { resolve } from 'path'
 import { newsCollectorSchema } from '../domain/news/config.js'
+import { runMigrations } from '../migrations/runner.js'
+import { dataPath } from '@/core/paths.js'
 
-const CONFIG_DIR = resolve('data/config')
+const CONFIG_DIR = dataPath('config')
 
 // ==================== Individual Schemas ====================
 
@@ -41,49 +43,70 @@ const apiKeysSchema = z.object({
   google: z.string().optional(),
 })
 
-const baseProfileFields = {
-  /** Preset ID this profile was created from (for constraint enforcement on edit). */
-  preset: z.string().optional(),
-  baseUrl: z.string().optional(),
-  apiKey: z.string().optional(),
-}
+// ==================== Credential layer (introduced by 0002) ====================
 
-export const agentSdkProfileSchema = z.object({
-  ...baseProfileFields,
-  backend: z.literal('agent-sdk'),
-  model: z.string().default('claude-opus-4-7'),
-  loginMethod: z.enum(['api-key', 'claudeai']).default('api-key'),
-})
-
-export const codexProfileSchema = z.object({
-  ...baseProfileFields,
-  backend: z.literal('codex'),
-  model: z.string().default('gpt-5.4'),
-  loginMethod: z.enum(['api-key', 'codex-oauth']).default('codex-oauth'),
-})
-
-export const vercelProfileSchema = z.object({
-  ...baseProfileFields,
-  backend: z.literal('vercel-ai-sdk'),
-  provider: z.string().default('anthropic'),
-  model: z.string().default('claude-opus-4-7'),
-})
-
-export const profileSchema = z.discriminatedUnion('backend', [
-  agentSdkProfileSchema, codexProfileSchema, vercelProfileSchema,
+export const credentialVendorEnum = z.enum([
+  'anthropic', 'openai', 'google',
+  'minimax', 'glm', 'kimi', 'deepseek', 'custom',
 ])
+export type CredentialVendor = z.infer<typeof credentialVendorEnum>
 
-export type Profile = z.infer<typeof profileSchema>
+export const credentialAuthTypeEnum = z.enum(['api-key', 'subscription'])
+export type CredentialAuthType = z.infer<typeof credentialAuthTypeEnum>
+
+/**
+ * The wire protocol the credential's endpoint speaks. Load-bearing, NOT
+ * derivable from baseUrl alone — OpenAI Chat Completions and Responses share
+ * one base URL (api.openai.com/v1), so only this field distinguishes them. Also
+ * tells injection how to configure the consuming adapter. Mirrors the
+ * `WireShape` union in ai-providers/preset-catalog.ts (kept in sync by hand —
+ * 3 stable values; core must not depend on the ai-providers layer).
+ */
+export const credentialWireShapeEnum = z.enum(['anthropic', 'openai-chat', 'openai-responses'])
+export type CredentialWireShape = z.infer<typeof credentialWireShapeEnum>
+
+export const credentialSchema = z.object({
+  vendor: credentialVendorEnum,
+  authType: credentialAuthTypeEnum,
+  /** Present for api-key credentials; absent for subscription credentials. */
+  apiKey: z.string().optional(),
+  /**
+   * The wire shapes this key can speak, each with its endpoint baseUrl (''/absent
+   * = the shape's official endpoint). A provider exposes the SAME key behind
+   * several incompatible shapes that differ only by endpoint (GLM: anthropic at
+   * /api/anthropic, openai-chat at /api/paas/v4), so one credential declares all
+   * of them — "wire capabilities" — and injection picks the one the target agent
+   * speaks. Fill the key once.
+   */
+  wires: z.partialRecord(credentialWireShapeEnum, z.string()).optional(),
+  /** @deprecated legacy single-endpoint fields — read via `credentialWires()`. */
+  baseUrl: z.string().trim().transform((s) => s || undefined).optional(),
+  /** @deprecated legacy single wire shape — superseded by `wires`. */
+  wireShape: credentialWireShapeEnum.optional(),
+})
+export type Credential = z.infer<typeof credentialSchema>
+
+/**
+ * The wire→baseUrl map for a credential, tolerating legacy creds that still
+ * carry the flat `{baseUrl, wireShape}` instead of `wires`. No migration needed:
+ * old creds are upgraded transparently on read.
+ */
+export function credentialWires(cred: Credential): Partial<Record<CredentialWireShape, string>> {
+  if (cred.wires && Object.keys(cred.wires).length > 0) return cred.wires
+  if (cred.wireShape) return { [cred.wireShape]: cred.baseUrl ?? '' }
+  return {}
+}
 
 export const aiProviderSchema = z.object({
   apiKeys: apiKeysSchema.default({}),
-  profiles: z.record(
-    z.string(),
-    profileSchema,
-  ).default({
-    default: { backend: 'agent-sdk', model: 'claude-opus-4-7', loginMethod: 'claudeai' },
-  }),
-  activeProfile: z.string().default('default'),
+  /**
+   * The central credential vault: api-key credentials by slug, each declaring
+   * its wire capabilities (`wires`). Injected into workspaces by template; the
+   * model loop itself runs in the native CLI. (The pre-0.40 `profiles` /
+   * `activeProfile` fields — for the deleted in-process provider — are gone;
+   * existing files keep them on disk until rewritten, where they're ignored.)
+   */
+  credentials: z.record(z.string(), credentialSchema).default({}),
 })
 
 export type AIProviderConfig = z.infer<typeof aiProviderSchema>
@@ -190,18 +213,20 @@ const compactionSchema = z.object({
   microcompactKeepRecent: z.number().default(3),
 })
 
-const activeHoursSchema = z.object({
-  start: z.string().regex(/^\d{1,2}:\d{2}$/, 'Expected HH:MM format'),
-  end: z.string().regex(/^\d{1,2}:\d{2}$/, 'Expected HH:MM format'),
-  timezone: z.string().default('local'),
-}).nullable().default(null)
-
+/**
+ * MCP server config — exposes OpenAlice's ToolCenter to external MCP
+ * clients (Claude Desktop, codex inside workspaces, etc.). Lives at the
+ * top level of Config rather than under `connectors:` because it's an
+ * export direction (ToolCenter → outside), not a chat-input connector.
+ * `connectors.mcpAsk` is the actual chat-shaped MCP-as-input flavour
+ * and stays in connectors.
+ */
+const mcpSchema = z.object({
+  port: z.number().int().positive().default(3001),
+}).default({ port: 3001 })
 
 const connectorsSchema = z.object({
   web: z.object({ port: z.number().int().positive().default(3002) }).default({ port: 3002 }),
-  mcp: z.object({
-    port: z.number().int().positive().default(3001),
-  }).default({ port: 3001 }),
   mcpAsk: z.object({
     enabled: z.boolean().default(false),
     port: z.number().int().positive().optional(),
@@ -212,13 +237,6 @@ const connectorsSchema = z.object({
     botUsername: z.string().optional(),
     chatIds: z.array(z.number()).default([]),
   }).default({ enabled: false, chatIds: [] }),
-})
-
-const heartbeatSchema = z.object({
-  enabled: z.boolean().default(false),
-  every: z.string().default('30m'),
-  prompt: z.string().default('Read data/brain/heartbeat.md (or default/heartbeat.default.md if not found) and follow the instructions inside.'),
-  activeHours: activeHoursSchema,
 })
 
 const snapshotSchema = z.object({
@@ -264,25 +282,56 @@ export const webSubchannelsSchema = z.array(webSubchannelSchema)
 
 export type WebChannel = z.infer<typeof webSubchannelSchema>
 
-// ==================== Account Config ====================
+// ==================== UTA Config ====================
 
 const guardConfigSchema = z.object({
   type: z.string(),
   options: z.record(z.string(), z.unknown()).default({}),
 })
 
-export const accountConfigSchema = z.object({
+/**
+ * One Unified Trading Account. The user-facing concept — one preset
+ * (OKX, Bybit, IBKR, …) plus credentials, guards, and an enabled flag.
+ *
+ * Distinct from `AccountInfo` (which is broker-side: cash, equity,
+ * margin returned by `IBroker.getAccount()`). Two different "account"s.
+ */
+export const utaConfigSchema = z.object({
   id: z.string(),
   label: z.string().optional(),
-  type: z.string(),
+  /** Broker preset id — resolves to engine + form schema via BROKER_PRESET_CATALOG. */
+  presetId: z.string(),
   enabled: z.boolean().default(true),
   guards: z.array(guardConfigSchema).default([]),
-  brokerConfig: z.record(z.string(), z.unknown()).default({}),
+  /** User-filled form values, validated against the preset's own zodSchema. */
+  presetConfig: z.record(z.string(), z.unknown()).default({}),
+  /**
+   * Test/throwaway UTA — purged at every server startup (config entry
+   * removed + `data/trading/<id>/` wiped) and dropped immediately when
+   * deleted via the UTA-config DELETE endpoint. For fixture-based testing:
+   * each session starts from a clean slate, no cross-session cost-basis
+   * pollution. Only allowed on `mock-simulator` preset; setting it on a
+   * real broker would silently destroy account history on next boot.
+   */
+  ephemeral: z.boolean().optional(),
+  /** No API key required to create/connect. A keyless UTA serves only public
+   *  market data (quote/bars/search) — it has no account/positions and is
+   *  excluded from portfolio equity aggregation. keyless ⟹ readOnly. */
+  keyless: z.boolean().default(false),
+  /** Read-only — write operations (stage/commit/push of orders) are refused.
+   *  Implied by keyless; can also be set on a keyed account for a watch-only view. */
+  readOnly: z.boolean().default(false),
+  /** Whether this UTA can be edited/removed via the config UI. The built-in
+   *  keyless data UTAs (binance/okx/bybit-readonly) are non-editable. */
+  editable: z.boolean().default(true),
+}).refine((u) => u.ephemeral !== true || u.presetId === 'mock-simulator', {
+  message: 'ephemeral: true is only allowed on mock-simulator UTAs (would destroy real broker history at next boot)',
+  path: ['ephemeral'],
 })
 
-export const accountsFileSchema = z.array(accountConfigSchema)
+export const utasFileSchema = z.array(utaConfigSchema)
 
-export type AccountConfig = z.infer<typeof accountConfigSchema>
+export type UTAConfig = z.infer<typeof utaConfigSchema>
 
 // ==================== Unified Config Type ====================
 
@@ -294,8 +343,8 @@ export type Config = {
   marketData: z.infer<typeof marketDataSchema>
   compaction: z.infer<typeof compactionSchema>
   aiProvider: z.infer<typeof aiProviderSchema>
-  heartbeat: z.infer<typeof heartbeatSchema>
   snapshot: z.infer<typeof snapshotSchema>
+  mcp: z.infer<typeof mcpSchema>
   connectors: z.infer<typeof connectorsSchema>
   news: z.infer<typeof newsCollectorSchema>
   tools: z.infer<typeof toolsSchema>
@@ -332,160 +381,15 @@ async function parseAndSeed<T>(filename: string, schema: z.ZodType<T>, raw: unkn
 }
 
 export async function loadConfig(): Promise<Config> {
-  const files = ['engine.json', 'agent.json', 'crypto.json', 'securities.json', 'market-data.json', 'compaction.json', 'ai-provider-manager.json', 'heartbeat.json', 'snapshot.json', 'connectors.json', 'news.json', 'tools.json', 'webhook.json'] as const
+  // Run pending migrations before reading any section. Each migration is
+  // recorded in data/config/_meta.json; the runner is a no-op when nothing
+  // is pending. See src/migrations/INDEX.md for the full list.
+  await runMigrations()
+
+  const files = ['engine.json', 'agent.json', 'crypto.json', 'securities.json', 'market-data.json', 'compaction.json', 'ai-provider-manager.json', 'snapshot.json', 'mcp.json', 'connectors.json', 'news.json', 'tools.json', 'webhook.json'] as const
   const raws = await Promise.all(files.map((f) => loadJsonFile(f)))
 
-  // TODO: remove all migration blocks before v1.0 — no stable release yet, breaking changes are fine
-  // ---------- Migration: flat ai-provider config → profile-based ----------
-  const aiProviderRaw = raws[6] as Record<string, unknown> | undefined
-  if (aiProviderRaw && 'backend' in aiProviderRaw && !('profiles' in aiProviderRaw)) {
-    // Legacy flat format detected — convert to profile-based
-
-    // Step 1: handle very old format (model.json + api-keys.json)
-    if (!('model' in aiProviderRaw)) {
-      const oldModel = await loadJsonFile('model.json') as Record<string, unknown> | undefined
-      const oldKeys = await loadJsonFile('api-keys.json') as Record<string, unknown> | undefined
-      if (oldModel) Object.assign(aiProviderRaw, { provider: oldModel.provider, model: oldModel.model, ...(oldModel.baseUrl ? { baseUrl: oldModel.baseUrl } : {}) })
-      if (oldKeys) aiProviderRaw.apiKeys = oldKeys
-      await removeJsonFile('model.json')
-      await removeJsonFile('api-keys.json')
-    }
-
-    // Step 2: handle claude-code → agent-sdk alias
-    if (aiProviderRaw.backend === 'claude-code') {
-      aiProviderRaw.backend = 'agent-sdk'
-      aiProviderRaw.loginMethod = aiProviderRaw.loginMethod ?? 'claudeai'
-    }
-
-    // Step 3: build default profile from flat config
-    const legacy = aiProviderLegacySchema.parse(aiProviderRaw)
-    const defaultProfile: Record<string, unknown> = { label: 'Default' }
-    if (legacy.backend === 'agent-sdk') {
-      defaultProfile.backend = 'agent-sdk'
-      defaultProfile.model = legacy.model
-      defaultProfile.loginMethod = legacy.loginMethod === 'codex-oauth' ? 'api-key' : legacy.loginMethod
-    } else if (legacy.backend === 'codex') {
-      defaultProfile.backend = 'codex'
-      defaultProfile.model = legacy.model
-      defaultProfile.loginMethod = legacy.loginMethod === 'claudeai' ? 'codex-oauth' : legacy.loginMethod
-    } else {
-      defaultProfile.backend = 'vercel-ai-sdk'
-      defaultProfile.provider = legacy.provider
-      defaultProfile.model = legacy.model
-    }
-    if (legacy.baseUrl) defaultProfile.baseUrl = legacy.baseUrl
-
-    // Step 4: migrate subchannel inline overrides → named profiles
-    const oldSubchannels = await loadJsonFile('web-subchannels.json') as Array<Record<string, unknown>> | undefined
-    const profiles: Record<string, unknown> = { default: defaultProfile }
-    const newSubchannels: Array<Record<string, unknown>> = []
-
-    if (oldSubchannels) {
-      for (const ch of oldSubchannels) {
-        const sub: Record<string, unknown> = { id: ch.id, label: ch.label }
-        if (ch.systemPrompt) sub.systemPrompt = ch.systemPrompt
-        if (ch.disabledTools) sub.disabledTools = ch.disabledTools
-
-        const provider = ch.provider as string | undefined
-        const override = provider === 'vercel-ai-sdk' ? ch.vercelAiSdk
-          : provider === 'agent-sdk' ? ch.agentSdk
-          : provider === 'codex' ? ch.codex
-          : undefined
-
-        if (provider && override) {
-          const slug = `${ch.id}-${provider}`
-          profiles[slug] = { backend: provider, label: `${ch.label}`, ...(override as object) }
-          sub.profile = slug
-        } else if (provider) {
-          // Provider set but no override — create a profile with just the backend
-          const slug = `${ch.id}-${provider}`
-          profiles[slug] = { ...defaultProfile, backend: provider, label: `${ch.label}` }
-          sub.profile = slug
-        }
-
-        newSubchannels.push(sub)
-      }
-      await writeFile(resolve(CONFIG_DIR, 'web-subchannels.json'), JSON.stringify(newSubchannels, null, 2) + '\n')
-    }
-
-    // Step 5: write new format
-    const migrated = { apiKeys: legacy.apiKeys, profiles, activeProfile: 'default' }
-    raws[6] = migrated
-    await mkdir(CONFIG_DIR, { recursive: true })
-    await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(migrated, null, 2) + '\n')
-  } else if (aiProviderRaw && !('backend' in aiProviderRaw) && !('profiles' in aiProviderRaw)) {
-    // Very old format (no backend, no profiles) — handle model.json merge first
-    const oldModel = await loadJsonFile('model.json') as Record<string, unknown> | undefined
-    const oldKeys = await loadJsonFile('api-keys.json') as Record<string, unknown> | undefined
-    const migrated = {
-      apiKeys: oldKeys ?? {},
-      profiles: {
-        default: {
-          backend: 'agent-sdk',
-          label: 'Default',
-          model: (oldModel?.model as string) ?? 'claude-opus-4-7',
-          loginMethod: 'claudeai',
-          provider: (oldModel?.provider as string) ?? 'anthropic',
-        },
-      },
-      activeProfile: 'default',
-    }
-    raws[6] = migrated
-    await mkdir(CONFIG_DIR, { recursive: true })
-    await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(migrated, null, 2) + '\n')
-    await removeJsonFile('model.json')
-    await removeJsonFile('api-keys.json')
-  }
-
-  // ---------- Migration: distribute global apiKeys into profiles ----------
-  const aiConfigAfterMigration = raws[6] as Record<string, unknown> | undefined
-  if (aiConfigAfterMigration && 'apiKeys' in aiConfigAfterMigration && 'profiles' in aiConfigAfterMigration) {
-    const keys = aiConfigAfterMigration.apiKeys as Record<string, string> | undefined
-    const profiles = aiConfigAfterMigration.profiles as Record<string, Record<string, unknown>>
-    if (keys && Object.values(keys).some(Boolean)) {
-      let changed = false
-      for (const profile of Object.values(profiles)) {
-        if (profile.apiKey) continue // already has a key, don't overwrite
-        const vendor = profile.backend === 'codex' ? 'openai'
-          : profile.backend === 'agent-sdk' ? 'anthropic'
-          : (profile.provider as string) ?? 'anthropic'
-        const globalKey = keys[vendor]
-        if (globalKey) {
-          profile.apiKey = globalKey
-          changed = true
-        }
-      }
-      if (changed) {
-        delete aiConfigAfterMigration.apiKeys
-        raws[6] = aiConfigAfterMigration
-        await mkdir(CONFIG_DIR, { recursive: true })
-        await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(aiConfigAfterMigration, null, 2) + '\n')
-      }
-    }
-  }
-
-  // ---------- Migration: consolidate old telegram.json + engine port fields ----------
-  const connectorsRaw = raws[9] as Record<string, unknown> | undefined
-  if (connectorsRaw === undefined) {
-    const oldTelegram = await loadJsonFile('telegram.json')
-    const oldEngine = raws[0] as Record<string, unknown> | undefined
-    const migrated: Record<string, unknown> = {}
-    if (oldTelegram && typeof oldTelegram === 'object') {
-      migrated.telegram = { ...(oldTelegram as Record<string, unknown>), enabled: true }
-    }
-    if (oldEngine) {
-      if (oldEngine.webPort !== undefined) migrated.web = { port: oldEngine.webPort }
-      if (oldEngine.mcpPort !== undefined) migrated.mcp = { port: oldEngine.mcpPort }
-      if (oldEngine.askMcpPort !== undefined) migrated.mcpAsk = { enabled: true, port: oldEngine.askMcpPort }
-      const { mcpPort: _m, askMcpPort: _a, webPort: _w, ...cleanEngine } = oldEngine
-      raws[0] = cleanEngine
-      await mkdir(CONFIG_DIR, { recursive: true })
-      await writeFile(resolve(CONFIG_DIR, 'engine.json'), JSON.stringify(cleanEngine, null, 2) + '\n')
-    }
-    raws[9] = Object.keys(migrated).length > 0 ? migrated : undefined
-  }
-
-  return {
+  const config: Config = {
     engine:        await parseAndSeed(files[0], engineSchema, raws[0]),
     agent:         await parseAndSeed(files[1], agentSchema, raws[1]),
     crypto:        await parseAndSeed(files[2], cryptoSchema, raws[2]),
@@ -493,40 +397,153 @@ export async function loadConfig(): Promise<Config> {
     marketData:    await parseAndSeed(files[4], marketDataSchema, raws[4]),
     compaction:    await parseAndSeed(files[5], compactionSchema, raws[5]),
     aiProvider:    await parseAndSeed(files[6], aiProviderSchema, raws[6]),
-    heartbeat:     await parseAndSeed(files[7], heartbeatSchema, raws[7]),
-    snapshot:      await parseAndSeed(files[8], snapshotSchema, raws[8]),
+    snapshot:      await parseAndSeed(files[7], snapshotSchema, raws[7]),
+    mcp:           await parseAndSeed(files[8], mcpSchema, raws[8]),
     connectors:    await parseAndSeed(files[9], connectorsSchema, raws[9]),
     news:          await parseAndSeed(files[10], newsCollectorSchema, raws[10]),
     tools:         await parseAndSeed(files[11], toolsSchema, raws[11]),
     webhook:       await parseAndSeed(files[12], webhookSchema, raws[12]),
   }
+
+  // Spawn-time-fixed channel: when guardian (Electron main) spawns the
+  // backend, it injects the chosen ports as env. Env wins over the file
+  // value because the file is user preference but the actual bound port
+  // is decided by guardian at boot (may differ if the preferred port was
+  // taken). In dev mode (no guardian) both env vars are unset and the
+  // file value flows through unchanged.
+  const envWebPort = parseEnvPort(process.env['OPENALICE_WEB_PORT'])
+  if (envWebPort !== null) config.connectors.web.port = envWebPort
+  const envMcpPort = parseEnvPort(process.env['OPENALICE_MCP_PORT'])
+  if (envMcpPort !== null) config.mcp.port = envMcpPort
+
+  return config
 }
 
-// ==================== Account Config Loader ====================
+/** Parse a port from env. Returns null if unset, blank, or out of range. */
+function parseEnvPort(raw: string | undefined): number | null {
+  if (raw === undefined || raw === '') return null
+  const n = Number.parseInt(raw, 10)
+  if (!Number.isFinite(n) || n <= 0 || n > 65535) return null
+  return n
+}
 
-/** Common fields that live at the top level, not inside brokerConfig. */
-const BASE_FIELDS = new Set(['id', 'label', 'type', 'guards', 'brokerConfig'])
+// ==================== UTA Config Loader ====================
+
+/** Single legacy record carries `type` (removed) without `presetId` (new). */
+function isLegacyRecord(o: Record<string, unknown>): boolean {
+  return typeof o['type'] === 'string' && typeof o['presetId'] !== 'string'
+}
 
 /**
- * Migrate flat account config (legacy) to nested brokerConfig format.
- * Any field not in BASE_FIELDS gets moved into brokerConfig.
+ * Best-effort migration from the pre-preset shape ({type, brokerConfig})
+ * to the preset shape ({presetId, presetConfig}).
+ *
+ * Returns null when the legacy record can't be mapped (unknown engine /
+ * missing exchange) — caller logs and skips.
+ *
+ * TODO(v0.10 → v1.0): remove this migration once nobody is upgrading
+ * from the pre-preset schema. Tracked alongside the AI-side migration
+ * cleanup at the top of this file.
  */
-function migrateAccountConfig(raw: Record<string, unknown>): Record<string, unknown> {
-  if (raw.brokerConfig) return raw  // already migrated
-  const migrated: Record<string, unknown> = {}
-  const brokerConfig: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(raw)) {
-    if (BASE_FIELDS.has(k)) {
-      migrated[k] = v
-    } else {
-      brokerConfig[k] = v
+function migrateLegacyUTA(raw: Record<string, unknown>): Record<string, unknown> | null {
+  const id = String(raw['id'] ?? '')
+  const label = raw['label'] as string | undefined
+  const enabled = raw['enabled'] as boolean | undefined
+  const guards = raw['guards'] as unknown[] | undefined
+  const type = String(raw['type'] ?? '')
+  const bc = (raw['brokerConfig'] ?? {}) as Record<string, unknown>
+
+  const base = (presetId: string, presetConfig: Record<string, unknown>) => ({
+    id,
+    ...(label !== undefined && { label }),
+    presetId,
+    enabled: enabled ?? true,
+    guards: guards ?? [],
+    presetConfig,
+  })
+
+  // CCXT — derive preset from exchange + flags
+  if (type === 'ccxt') {
+    const exchange = String(bc['exchange'] ?? '').toLowerCase()
+    const apiKey = bc['apiKey'] as string | undefined
+    // Legacy used both `secret` and `apiSecret` (alias); new presets use `secret`.
+    const secret = (bc['secret'] ?? bc['apiSecret']) as string | undefined
+    const password = bc['password'] as string | undefined
+    const sandbox = Boolean(bc['sandbox'])
+    const demoTrading = Boolean(bc['demoTrading'])
+    const walletAddress = bc['walletAddress'] as string | undefined
+    const privateKey = bc['privateKey'] as string | undefined
+
+    switch (exchange) {
+      case 'okx':
+        // OKX old configs that set demoTrading: true were broken (the engine
+        // would set urls['api'] = undefined). We treat any non-live flag as
+        // mode=demo so the migrated account actually works.
+        return base('okx', {
+          mode: (sandbox || demoTrading) ? 'demo' : 'live',
+          ...(apiKey && { apiKey }),
+          ...(secret && { secret }),
+          ...(password && { password }),
+        })
+      case 'bybit':
+        return base('bybit', {
+          mode: sandbox ? 'testnet' : (demoTrading ? 'demo' : 'live'),
+          ...(apiKey && { apiKey }),
+          ...(secret && { secret }),
+        })
+      case 'hyperliquid':
+        return base('hyperliquid', {
+          mode: sandbox ? 'testnet' : 'live',
+          ...(walletAddress && { walletAddress }),
+          ...(privateKey && { privateKey }),
+        })
+      case 'bitget':
+        return base('bitget', {
+          mode: demoTrading ? 'demo' : 'live',
+          ...(apiKey && { apiKey }),
+          ...(secret && { secret }),
+          ...(password && { password }),
+        })
+      default:
+        // Unknown / untested exchange — keep functional via the escape hatch.
+        if (!exchange) return null
+        return base('ccxt-custom', {
+          exchange,
+          sandbox,
+          demoTrading,
+          ...(apiKey && { apiKey }),
+          ...(secret && { secret }),
+          ...(password && { password }),
+          ...(walletAddress && { walletAddress }),
+          ...(privateKey && { privateKey }),
+        })
     }
   }
-  migrated.brokerConfig = brokerConfig
-  return migrated
+
+  if (type === 'alpaca') {
+    return base('alpaca', {
+      mode: bc['paper'] === false ? 'live' : 'paper',
+      ...(bc['apiKey'] !== undefined && { apiKey: bc['apiKey'] }),
+      ...(bc['apiSecret'] !== undefined && { apiSecret: bc['apiSecret'] }),
+    })
+  }
+
+  if (type === 'ibkr') {
+    return base('ibkr-tws', {
+      ...(bc['host'] !== undefined && { host: bc['host'] }),
+      ...(bc['port'] !== undefined && { port: bc['port'] }),
+      ...(bc['clientId'] !== undefined && { clientId: bc['clientId'] }),
+      ...(bc['accountId'] !== undefined && { accountId: bc['accountId'] }),
+    })
+  }
+
+  return null
 }
 
-export async function readAccountsConfig(): Promise<AccountConfig[]> {
+// File name on disk stays `accounts.json` — internal-only, never
+// user-visible. Renaming would require another migration block; cost
+// outweighs benefit. The on-disk schema is the new UTA shape.
+export async function readUTAsConfig(): Promise<UTAConfig[]> {
   const raw = await loadJsonFile('accounts.json')
   if (raw === undefined) {
     // Seed empty file on first run
@@ -534,15 +551,80 @@ export async function readAccountsConfig(): Promise<AccountConfig[]> {
     await writeFile(resolve(CONFIG_DIR, 'accounts.json'), '[]\n')
     return []
   }
-  // Migrate legacy flat format → nested brokerConfig
-  const migrated = (raw as unknown[]).map((item) => migrateAccountConfig(item as Record<string, unknown>))
-  return accountsFileSchema.parse(migrated)
+
+  // Auto-migrate the pre-preset shape ({type, brokerConfig}) into the
+  // current shape ({presetId, presetConfig}). We back the original up
+  // first (so a bad migration is never destructive) and write the
+  // translated records to disk so subsequent reads skip this branch.
+  if (Array.isArray(raw) && (raw as unknown[]).some((r) => isLegacyRecord(r as Record<string, unknown>))) {
+    const backupPath = resolve(CONFIG_DIR, 'accounts.json.backup-pre-preset')
+    await writeFile(backupPath, JSON.stringify(raw, null, 2) + '\n')
+
+    const migrated: Record<string, unknown>[] = []
+    const skipped: string[] = []
+    for (const item of raw as Record<string, unknown>[]) {
+      // Already in new shape — keep verbatim.
+      if (!isLegacyRecord(item)) { migrated.push(item); continue }
+      const next = migrateLegacyUTA(item)
+      if (next) {
+        migrated.push(next)
+      } else {
+        skipped.push(String(item['id'] ?? '<unknown>'))
+      }
+    }
+
+    console.warn(
+      `accounts.json: migrated ${migrated.length - skipped.length} legacy record(s) to preset shape ` +
+      `(backup: ${backupPath}).` +
+      (skipped.length ? ` Skipped (unknown engine, recreate manually): ${skipped.join(', ')}.` : ''),
+    )
+
+    const validated = utasFileSchema.parse(migrated)
+    await writeFile(resolve(CONFIG_DIR, 'accounts.json'), JSON.stringify(validated, null, 2) + '\n')
+    return validated
+  }
+
+  return utasFileSchema.parse(raw)
 }
 
-export async function writeAccountsConfig(accounts: AccountConfig[]): Promise<void> {
-  const validated = accountsFileSchema.parse(accounts)
+export async function writeUTAsConfig(utas: UTAConfig[]): Promise<void> {
+  const validated = utasFileSchema.parse(utas)
   await mkdir(CONFIG_DIR, { recursive: true })
   await writeFile(resolve(CONFIG_DIR, 'accounts.json'), JSON.stringify(validated, null, 2) + '\n')
+}
+
+/**
+ * Wipe a UTA's persistent trading state (`data/trading/<id>/`). Used when
+ * destroying ephemeral UTAs — boot-time purge AND mid-session DELETE both
+ * funnel here so commit history / snapshots don't outlive the UTA.
+ *
+ * No-op if the directory doesn't exist; never touches `data/config/`.
+ */
+export async function wipeUTATradingData(id: string): Promise<void> {
+  const dir = resolve('data', 'trading', id)
+  await rm(dir, { recursive: true, force: true })
+}
+
+/**
+ * Purge ephemeral UTAs at server startup: remove their entries from
+ * `accounts.json` AND wipe their `data/trading/<id>/` dirs. Called once
+ * from the boot path before UTAManager starts initializing UTAs, so
+ * ephemeral residue from the previous session never reaches the manager.
+ *
+ * Returns the surviving non-ephemeral UTAs (caller iterates these for
+ * normal init).
+ */
+export async function purgeEphemeralUTAs(utas: UTAConfig[]): Promise<UTAConfig[]> {
+  const ephemeral = utas.filter((u) => u.ephemeral === true)
+  if (ephemeral.length === 0) return utas
+
+  for (const u of ephemeral) {
+    console.log(`startup: purging ephemeral UTA ${u.id}${u.label ? ` (${u.label})` : ''}`)
+    await wipeUTATradingData(u.id)
+  }
+  const survivors = utas.filter((u) => u.ephemeral !== true)
+  await writeUTAsConfig(survivors)
+  return survivors
 }
 
 // ==================== Hot-read helpers ====================
@@ -608,56 +690,71 @@ export async function readWebhookConfig() {
   }
 }
 
-// ==================== Profile Helpers ====================
+// ==================== Credential Helpers ====================
 
-/** Resolved profile — all fields needed by providers. */
-export interface ResolvedProfile {
-  backend: AIBackend
-  model: string
-  preset?: string
-  apiKey?: string
-  baseUrl?: string
-  loginMethod?: string
-  provider?: string
+/** Read a credential by slug. Throws if missing. */
+export async function resolveCredential(slug: string): Promise<Credential> {
+  const config = await readAIProviderConfig()
+  const cred = config.credentials[slug]
+  if (!cred) throw new Error(`Unknown credential: "${slug}"`)
+  return { ...cred }
 }
 
-/** Resolve a profile by slug. API key comes from the profile directly. */
-export async function resolveProfile(slug?: string): Promise<ResolvedProfile> {
+/** Read all credentials as a slug-keyed map. */
+export async function readCredentials(): Promise<Record<string, Credential>> {
   const config = await readAIProviderConfig()
-  const key = slug ?? config.activeProfile
-  const profile = config.profiles[key]
-  if (!profile) throw new Error(`Unknown AI provider profile: "${key}"`)
-  return { ...profile }
+  return { ...config.credentials }
 }
 
-/** Get the active profile slug. */
-export async function getActiveProfileSlug(): Promise<string> {
+/** Write a single credential (create or update). */
+export async function writeCredential(slug: string, credential: Credential): Promise<void> {
   const config = await readAIProviderConfig()
-  return config.activeProfile
-}
-
-/** Set the active profile. */
-export async function setActiveProfile(slug: string): Promise<void> {
-  const config = await readAIProviderConfig()
-  if (!config.profiles[slug]) throw new Error(`Unknown profile: "${slug}"`)
-  const updated = { ...config, activeProfile: slug }
-  await mkdir(CONFIG_DIR, { recursive: true })
-  await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(updated, null, 2) + '\n')
-}
-
-/** Write a single profile (create or update). */
-export async function writeProfile(slug: string, profile: Profile): Promise<void> {
-  const config = await readAIProviderConfig()
-  config.profiles[slug] = profile
+  const validated = credentialSchema.parse(credential)
+  config.credentials[slug] = validated
   await mkdir(CONFIG_DIR, { recursive: true })
   await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(config, null, 2) + '\n')
 }
 
-/** Delete a profile. Cannot delete the active profile. */
-export async function deleteProfile(slug: string): Promise<void> {
+/**
+ * Add a credential to the central store. Dedups by {vendor, authType, apiKey} —
+ * one key is one account, regardless of how many wires/endpoints it can drive —
+ * so re-adding a key you already have (even with a different/newer wire set)
+ * reuses the slug and UPGRADES its wires in place rather than duplicating.
+ * Returns the slug.
+ *
+ * Standalone counterpart to `extractCredentialFromProfile` for credentials that
+ * don't come from a profile — e.g. the workspace AI-config modal's "save to
+ * Alice" path.
+ */
+export async function addCredential(credential: Credential): Promise<string> {
   const config = await readAIProviderConfig()
-  if (config.activeProfile === slug) throw new Error('Cannot delete the active profile')
-  delete config.profiles[slug]
+  const validated = credentialSchema.parse(credential)
+  const match = Object.entries(config.credentials).find(([, c]) =>
+    c.vendor === validated.vendor &&
+    c.authType === validated.authType &&
+    c.apiKey === validated.apiKey,
+  )
+  if (match) {
+    // Upgrade the existing record's wires/endpoint in place (don't duplicate).
+    config.credentials[match[0]] = validated
+    await mkdir(CONFIG_DIR, { recursive: true })
+    await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(config, null, 2) + '\n')
+    return match[0]
+  }
+  const taken = new Set(Object.keys(config.credentials))
+  let n = 1
+  while (taken.has(`${validated.vendor}-${n}`)) n++
+  const slug = `${validated.vendor}-${n}`
+  config.credentials[slug] = validated
+  await mkdir(CONFIG_DIR, { recursive: true })
+  await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(config, null, 2) + '\n')
+  return slug
+}
+
+/** Delete a credential from the vault. */
+export async function deleteCredential(slug: string): Promise<void> {
+  const config = await readAIProviderConfig()
+  delete config.credentials[slug]
   await mkdir(CONFIG_DIR, { recursive: true })
   await writeFile(resolve(CONFIG_DIR, 'ai-provider-manager.json'), JSON.stringify(config, null, 2) + '\n')
 }
@@ -674,8 +771,8 @@ const sectionSchemas: Record<ConfigSection, z.ZodTypeAny> = {
   marketData: marketDataSchema,
   compaction: compactionSchema,
   aiProvider: aiProviderSchema,
-  heartbeat: heartbeatSchema,
   snapshot: snapshotSchema,
+  mcp: mcpSchema,
   connectors: connectorsSchema,
   news: newsCollectorSchema,
   tools: toolsSchema,
@@ -690,8 +787,8 @@ const sectionFiles: Record<ConfigSection, string> = {
   marketData: 'market-data.json',
   compaction: 'compaction.json',
   aiProvider: 'ai-provider-manager.json',
-  heartbeat: 'heartbeat.json',
   snapshot: 'snapshot.json',
+  mcp: 'mcp.json',
   connectors: 'connectors.json',
   news: 'news.json',
   tools: 'tools.json',

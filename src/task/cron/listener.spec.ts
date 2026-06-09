@@ -4,233 +4,192 @@ import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { createEventLog, type EventLog } from '../../core/event-log.js'
 import { createListenerRegistry, type ListenerRegistry } from '../../core/listener-registry.js'
-import { createCronListener, type CronListener } from './listener.js'
-import { SessionStore } from '../../core/session.js'
+import {
+  createCronListener,
+  type CronListener,
+  type WorkspaceServiceBox,
+  type CronDispatchLogger,
+} from './listener.js'
 import type { CronFirePayload } from './engine.js'
-import { ConnectorCenter } from '../../core/connector-center.js'
+import type { WorkspaceService } from '../../workspaces/service.js'
 
 function tempPath(ext: string): string {
   return join(tmpdir(), `cron-listener-test-${randomUUID()}.${ext}`)
 }
 
-// ==================== Mock Engine ====================
+// ==================== Fake WorkspaceService ====================
+//
+// The listener uses a narrow slice: registry.get(id) → meta, resolveAdapter,
+// dispatchHeadlessTask. We fake exactly that and record dispatch calls.
 
-function createMockEngine(response = 'AI reply') {
-  const calls: Array<{ prompt: string; session: SessionStore }> = []
-  let shouldFail = false
+interface DispatchCall {
+  wsId: string
+  adapterId: string
+  prompt: string
+  timeoutMs: number
+}
 
-  return {
-    calls,
-    setResponse(text: string) { response = text },
-    setShouldFail(val: boolean) { shouldFail = val },
-    // Partial Engine mock — only askWithSession is needed
-    askWithSession: vi.fn(async (prompt: string, session: SessionStore) => {
-      calls.push({ prompt, session })
-      if (shouldFail) throw new Error('engine error')
-      return { text: response, media: [] }
+function makeService(opts: {
+  workspaces: Record<string, { id: string; tag: string; agents: string[] }>
+  headless?: boolean
+  dispatch?: () => Promise<{ taskId: string }>
+}): { svc: WorkspaceService; calls: DispatchCall[] } {
+  const calls: DispatchCall[] = []
+  const headless = opts.headless ?? true
+  const svc = {
+    registry: { get: (id: string) => opts.workspaces[id] },
+    resolveAdapter: (meta: { agents: string[] }, agentId?: string) => ({
+      id: agentId ?? meta.agents[0] ?? 'claude',
+      capabilities: { headless },
     }),
-    // Stubs for other Engine methods
-    ask: vi.fn(),
+    dispatchHeadlessTask: async (
+      meta: { id: string },
+      adapter: { id: string },
+      prompt: string,
+      timeoutMs: number,
+    ) => {
+      calls.push({ wsId: meta.id, adapterId: adapter.id, prompt, timeoutMs })
+      return opts.dispatch ? opts.dispatch() : { taskId: 'task-1' }
+    },
+  } as unknown as WorkspaceService
+  return { svc, calls }
+}
+
+function captureLogger(): { logger: CronDispatchLogger; errors: string[]; infos: string[] } {
+  const errors: string[] = []
+  const infos: string[] = []
+  return {
+    logger: { info: (m) => infos.push(m), warn: () => {}, error: (m) => errors.push(m) },
+    errors,
+    infos,
   }
 }
 
-describe('cron listener', () => {
+describe('cron listener → headless dispatch', () => {
   let eventLog: EventLog
   let registry: ListenerRegistry
   let cronListener: CronListener
-  let mockEngine: ReturnType<typeof createMockEngine>
-  let session: SessionStore
-  let logPath: string
-  let connectorCenter: ConnectorCenter
+  let ref: WorkspaceServiceBox
+  let cap: ReturnType<typeof captureLogger>
+
+  async function fire(payload: CronFirePayload): Promise<void> {
+    await eventLog.append('cron.fire', payload)
+  }
 
   beforeEach(async () => {
-    logPath = tempPath('jsonl')
-    eventLog = await createEventLog({ logPath })
+    eventLog = await createEventLog({ logPath: tempPath('jsonl') })
     registry = createListenerRegistry(eventLog)
-    mockEngine = createMockEngine()
-    session = new SessionStore(`test/cron-${randomUUID()}`)
-    connectorCenter = new ConnectorCenter()
-
-    cronListener = createCronListener({
-      connectorCenter,
-      agentCenter: mockEngine as any,
-      registry,
-      session,
-    })
-    await cronListener.start()
     await registry.start()
+    ref = { current: null }
+    cap = captureLogger()
+    cronListener = createCronListener({ registry, workspaceServiceRef: ref, logger: cap.logger })
+    await cronListener.start()
   })
 
   afterEach(async () => {
+    cronListener.stop()
     await registry.stop()
     await eventLog._resetForTest()
   })
 
-  // ==================== Basic functionality ====================
-
-  describe('event handling', () => {
-    it('should call engine.askWithSession on cron.fire', async () => {
-      await eventLog.append('cron.fire', {
-        jobId: 'abc12345',
-        jobName: 'test-job',
-        payload: 'Check the market',
-      } satisfies CronFirePayload)
-
-      // Wait for async handler
-      await vi.waitFor(() => {
-        expect(mockEngine.askWithSession).toHaveBeenCalledTimes(1)
-      })
-
-      expect(mockEngine.askWithSession).toHaveBeenCalledWith(
-        'Check the market',
-        session,
-        expect.objectContaining({ historyPreamble: expect.any(String) }),
-      )
+  it('dispatches a headless run for a job targeting a workspace + agent', async () => {
+    const { svc, calls } = makeService({
+      workspaces: { 'ws-1': { id: 'ws-1', tag: 'research', agents: ['claude', 'codex'] } },
     })
+    ref.current = svc
 
-    it('should write cron.done event on success', async () => {
-      const fireEntry = await eventLog.append('cron.fire', {
-        jobId: 'abc12345',
-        jobName: 'test-job',
-        payload: 'Do something',
-      } satisfies CronFirePayload)
+    await fire({ jobId: 'j1', jobName: 'morning-scan', payload: 'Scan the market', workspaceId: 'ws-1', agent: 'codex' })
 
-      await vi.waitFor(() => {
-        const done = eventLog.recent({ type: 'cron.done' })
-        expect(done).toHaveLength(1)
-      })
-
-      const done = eventLog.recent({ type: 'cron.done' })
-      expect(done[0].payload).toMatchObject({
-        jobId: 'abc12345',
-        jobName: 'test-job',
-        reply: 'AI reply',
-      })
-      expect((done[0].payload as any).durationMs).toBeGreaterThanOrEqual(0)
-      expect(done[0].causedBy).toBe(fireEntry.seq)
-    })
-
-    it('should not react to other event types', async () => {
-      await eventLog.append('some.other.event', { data: 'hello' })
-
-      // Give it a moment
-      await new Promise((r) => setTimeout(r, 50))
-
-      expect(mockEngine.askWithSession).not.toHaveBeenCalled()
-    })
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    expect(calls[0]).toMatchObject({ wsId: 'ws-1', adapterId: 'codex', prompt: 'Scan the market' })
+    expect(calls[0].timeoutMs).toBeGreaterThan(0)
   })
 
-  // ==================== Delivery ====================
-
-  describe('delivery', () => {
-    it('should deliver reply through connector registry', async () => {
-      const delivered: string[] = []
-      connectorCenter.register({
-        channel: 'test',
-        to: 'user1',
-        capabilities: { push: true, media: false },
-        send: async (payload) => { delivered.push(payload.text); return { delivered: true } },
-      })
-
-      await eventLog.append('cron.fire', {
-        jobId: 'abc12345',
-        jobName: 'test-job',
-        payload: 'Hello',
-      } satisfies CronFirePayload)
-
-      await vi.waitFor(() => {
-        expect(delivered).toHaveLength(1)
-      })
-
-      expect(delivered[0]).toBe('AI reply')
+  it('defaults to the workspace default agent when none is named', async () => {
+    const { svc, calls } = makeService({
+      workspaces: { 'ws-1': { id: 'ws-1', tag: 'research', agents: ['pi', 'claude'] } },
     })
+    ref.current = svc
 
-    it('should handle delivery failure gracefully', async () => {
-      connectorCenter.register({
-        channel: 'test',
-        to: 'user1',
-        capabilities: { push: true, media: false },
-        send: async () => { throw new Error('send failed') },
-      })
+    await fire({ jobId: 'j1', jobName: 'scan', payload: 'go', workspaceId: 'ws-1' })
 
-      await eventLog.append('cron.fire', {
-        jobId: 'abc12345',
-        jobName: 'test-job',
-        payload: 'Hello',
-      } satisfies CronFirePayload)
-
-      // Should still write cron.done (delivery failure is non-fatal)
-      await vi.waitFor(() => {
-        const done = eventLog.recent({ type: 'cron.done' })
-        expect(done).toHaveLength(1)
-      })
-    })
-
-    it('should handle no connectors gracefully', async () => {
-      // No connectors registered
-      await eventLog.append('cron.fire', {
-        jobId: 'abc12345',
-        jobName: 'test-job',
-        payload: 'Hello',
-      } satisfies CronFirePayload)
-
-      // Should still write cron.done
-      await vi.waitFor(() => {
-        const done = eventLog.recent({ type: 'cron.done' })
-        expect(done).toHaveLength(1)
-      })
-    })
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    expect(calls[0].adapterId).toBe('pi')
   })
 
-  // ==================== Error handling ====================
+  it('loud-skips a job with no target workspace', async () => {
+    const { svc, calls } = makeService({ workspaces: {} })
+    ref.current = svc
 
-  describe('error handling', () => {
-    it('should write cron.error on engine failure', async () => {
-      mockEngine.setShouldFail(true)
+    await fire({ jobId: 'j1', jobName: 'legacy', payload: 'go' })
 
-      const fireEntry = await eventLog.append('cron.fire', {
-        jobId: 'abc12345',
-        jobName: 'test-job',
-        payload: 'Will fail',
-      } satisfies CronFirePayload)
-
-      await vi.waitFor(() => {
-        const errors = eventLog.recent({ type: 'cron.error' })
-        expect(errors).toHaveLength(1)
-      })
-
-      const errors = eventLog.recent({ type: 'cron.error' })
-      expect(errors[0].payload).toMatchObject({
-        jobId: 'abc12345',
-        jobName: 'test-job',
-        error: 'engine error',
-      })
-      expect((errors[0].payload as any).durationMs).toBeGreaterThanOrEqual(0)
-      expect(errors[0].causedBy).toBe(fireEntry.seq)
-    })
+    await vi.waitFor(() => expect(cap.errors.some((e) => e.includes('no target workspace'))).toBe(true))
+    expect(calls).toHaveLength(0)
   })
 
-  // ==================== Lifecycle ====================
+  it('loud-skips when the workspace service is not ready yet', async () => {
+    ref.current = null // plugin not booted
+    await fire({ jobId: 'j1', jobName: 'early', payload: 'go', workspaceId: 'ws-1', agent: 'claude' })
+    await vi.waitFor(() => expect(cap.errors.some((e) => e.includes('not ready'))).toBe(true))
+  })
 
-  describe('lifecycle', () => {
-    it('should stop receiving events after registry.stop()', async () => {
-      await registry.stop()
+  it('loud-skips an unknown target workspace', async () => {
+    const { svc, calls } = makeService({ workspaces: {} })
+    ref.current = svc
+    await fire({ jobId: 'j1', jobName: 'gone', payload: 'go', workspaceId: 'deleted-ws', agent: 'claude' })
+    await vi.waitFor(() => expect(cap.errors.some((e) => e.includes('unknown workspace'))).toBe(true))
+    expect(calls).toHaveLength(0)
+  })
 
-      await eventLog.append('cron.fire', {
-        jobId: 'abc12345',
-        jobName: 'test-job',
-        payload: 'Should not fire',
-      } satisfies CronFirePayload)
-
-      // Give it a moment
-      await new Promise((r) => setTimeout(r, 50))
-
-      expect(mockEngine.askWithSession).not.toHaveBeenCalled()
+  it('loud-skips when the named agent is not enabled on the workspace', async () => {
+    const { svc, calls } = makeService({
+      workspaces: { 'ws-1': { id: 'ws-1', tag: 'research', agents: ['claude'] } },
     })
+    ref.current = svc
+    await fire({ jobId: 'j1', jobName: 'bad-agent', payload: 'go', workspaceId: 'ws-1', agent: 'codex' })
+    await vi.waitFor(() => expect(cap.errors.some((e) => e.includes('not enabled'))).toBe(true))
+    expect(calls).toHaveLength(0)
+  })
 
-    it('should be idempotent on repeated start()', async () => {
-      await cronListener.start()  // second call — should be a no-op
-      // No error
+  it('loud-logs a dispatch failure (e.g. capacity) without throwing', async () => {
+    const { svc } = makeService({
+      workspaces: { 'ws-1': { id: 'ws-1', tag: 'research', agents: ['claude'] } },
+      dispatch: async () => { throw new Error('headless capacity reached') },
     })
+    ref.current = svc
+    await fire({ jobId: 'j1', jobName: 'busy', payload: 'go', workspaceId: 'ws-1', agent: 'claude' })
+    await vi.waitFor(() => expect(cap.errors.some((e) => e.includes('dispatch failed'))).toBe(true))
+  })
+
+  it('drops internal __*__ job names without dispatching', async () => {
+    const { svc, calls } = makeService({
+      workspaces: { 'ws-1': { id: 'ws-1', tag: 'research', agents: ['claude'] } },
+    })
+    ref.current = svc
+    await fire({ jobId: 'snap', jobName: '__snapshot__', payload: '', workspaceId: 'ws-1' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(calls).toHaveLength(0)
+    expect(cap.errors).toHaveLength(0)
+  })
+
+  it('does not react to other event types', async () => {
+    const { svc, calls } = makeService({
+      workspaces: { 'ws-1': { id: 'ws-1', tag: 'research', agents: ['claude'] } },
+    })
+    ref.current = svc
+    await eventLog.append('message.received' as never, { channel: 'web', to: 'x', prompt: 'p' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(calls).toHaveLength(0)
+  })
+
+  it('stops dispatching after registry.stop()', async () => {
+    const { svc, calls } = makeService({
+      workspaces: { 'ws-1': { id: 'ws-1', tag: 'research', agents: ['claude'] } },
+    })
+    ref.current = svc
+    await registry.stop()
+    await fire({ jobId: 'j1', jobName: 'after-stop', payload: 'go', workspaceId: 'ws-1', agent: 'claude' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(calls).toHaveLength(0)
   })
 })

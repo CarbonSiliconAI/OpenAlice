@@ -3,7 +3,33 @@
  * Maps to: openbb_core/provider/utils/helpers.py
  */
 
-import { OpenBBError } from './errors.js'
+import { OpenBBError, NetworkUnreachableError } from './errors.js'
+
+/**
+ * Identify a fetch failure that never reached the provider — network
+ * layer (DNS, routing, TLS, proxy) rather than HTTP-level.
+ *
+ * Node 18+ wraps low-level network errors in TypeError("fetch failed")
+ * with the underlying cause attached as `.cause`. Common cause codes
+ * we want to flag specifically: ENOTFOUND (DNS), ECONNREFUSED, ETIMEDOUT,
+ * EHOSTUNREACH, ENETUNREACH, EAI_AGAIN, plus TLS handshake failures
+ * (UNABLE_TO_VERIFY_LEAF_SIGNATURE, SELF_SIGNED_CERT_IN_CHAIN, etc.).
+ */
+function isFetchNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false
+  if (!/fetch failed/i.test(error.message)) return false
+  return true
+}
+
+function describeFetchCause(error: unknown): string {
+  if (!(error instanceof Error)) return String(error)
+  const cause = (error as Error & { cause?: unknown }).cause
+  if (cause instanceof Error) {
+    const code = (cause as Error & { code?: string }).code
+    return code ? `${code}: ${cause.message}` : cause.message
+  }
+  return error.message
+}
 
 /** Query-param names that carry secrets and must not appear in error logs. */
 const SECRET_QUERY_KEYS = new Set([
@@ -75,6 +101,10 @@ export async function amakeRequest<T = unknown>(
   } catch (error) {
     if (error instanceof DOMException && error.name === 'TimeoutError') {
       throw new OpenBBError(`Request timed out after ${timeoutMs}ms: ${safeUrl}`)
+    }
+    if (isFetchNetworkFailure(error)) {
+      const host = (() => { try { return new URL(url).host } catch { return safeUrl } })()
+      throw new NetworkUnreachableError(host, describeFetchCause(error), error)
     }
     throw new OpenBBError(`Request failed (${describeCause(error)}): ${safeUrl}`, error)
   }

@@ -5,10 +5,12 @@
   "type": "module",
   "exports": {
     ".": {
+      "openalice-source": "./src/index.ts",
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
     "./server": {
+      "openalice-source": "./src/server.ts",
       "import": "./dist/server.js",
       "types": "./dist/server.d.ts"
     }
@@ -42,8 +44,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.8",
-    "hono": "^4.12.7",
+    "@hono/node-server": "^2.0.0",
+    "hono": "^4.12.14",
     "undici": "^7.24.4",
     "yahoo-finance2": "^3.13.1",
     "zod": "^3.24.2"

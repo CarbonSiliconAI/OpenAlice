@@ -240,14 +240,6 @@ export const CONNECTOR_OPTIONS: SDKOption[] = [
     locked: true,
   },
   {
-    id: 'mcp',
-    name: 'MCP Server',
-    description: 'Tool bridge for Claude Code provider and external AI agents.',
-    badge: 'MC',
-    badgeColor: 'text-purple',
-    locked: true,
-  },
-  {
     id: 'mcpAsk',
     name: 'MCP Ask',
     description: 'Multi-turn conversation endpoint for external agents.',

@@ -62,6 +62,11 @@ export class BLSBlsSeriesFetcher extends Fetcher {
     const results: Record<string, unknown>[] = []
     for (const series of data.Results?.series ?? []) {
       for (const obs of series.data) {
+        // BLS returns '-' (or other non-numeric) for unavailable observations —
+        // e.g. the 2025-10 UNRATE dropout due to "lapse in appropriations".
+        // Skip rather than push NaN, which the schema would reject.
+        const value = parseFloat(obs.value)
+        if (Number.isNaN(value)) continue
         // Convert period M01..M12 to month
         const monthMatch = obs.period.match(/M(\d{2})/)
         const month = monthMatch ? monthMatch[1] : '01'
@@ -69,7 +74,7 @@ export class BLSBlsSeriesFetcher extends Fetcher {
         results.push({
           date,
           series_id: series.seriesID,
-          value: parseFloat(obs.value),
+          value,
           period: obs.period,
         })
       }

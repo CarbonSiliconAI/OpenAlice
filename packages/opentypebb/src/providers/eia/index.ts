@@ -14,7 +14,11 @@ export const eiaProvider = new Provider({
   description:
     'The U.S. Energy Information Administration (EIA) collects, analyzes, and ' +
     'disseminates independent and impartial energy information.',
-  credentials: ['eia_api_key'],
+  // Plain `api_key` — Provider constructor auto-prefixes with provider name,
+  // so the runtime credential field becomes `eia_api_key`. Declaring the
+  // already-prefixed form here would double-prefix to `eia_eia_api_key`
+  // and silently break credential propagation.
+  credentials: ['api_key'],
   fetcherDict: {
     PetroleumStatusReport: EIAPetroleumStatusReportFetcher,
     ShortTermEnergyOutlook: EIAShortTermEnergyOutlookFetcher,

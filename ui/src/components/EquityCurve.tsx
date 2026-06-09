@@ -3,6 +3,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import type { EquityCurvePoint } from '../api'
+import { getIntlLocale } from '../lib/intl'
 
 // ==================== Time ranges ====================
 
@@ -178,7 +179,7 @@ function CustomTooltip({ active, payload, isAllView, accounts }: any) {
         {new Date(data.time).toLocaleString()}
       </p>
       <p className="text-text font-semibold tabular-nums">
-        ${Number(data.equity).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        ${Number(data.equity).toLocaleString(getIntlLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
       </p>
       {isAllView && data.accounts && Object.keys(data.accounts).length > 1 && (
         <div className="mt-1.5 pt-1.5 border-t border-border space-y-0.5">
@@ -186,7 +187,7 @@ function CustomTooltip({ active, payload, isAllView, accounts }: any) {
             <div key={id} className="flex justify-between gap-4">
               <span className="text-text-muted">{accountMap.get(id) ?? id}</span>
               <span className="text-text tabular-nums">
-                ${Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${Number(val).toLocaleString(getIntlLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
           ))}
@@ -202,10 +203,10 @@ function formatTime(ts: number): string {
   const d = new Date(ts)
   const now = new Date()
   if (d.toDateString() === now.toDateString()) {
-    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    return d.toLocaleTimeString(getIntlLocale(), { hour: '2-digit', minute: '2-digit' })
   }
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
-    ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleDateString(getIntlLocale(), { month: 'short', day: 'numeric' }) +
+    ' ' + d.toLocaleTimeString(getIntlLocale(), { hour: '2-digit', minute: '2-digit' })
 }
 
 function formatCurrency(val: number): string {

@@ -1,4 +1,5 @@
 import type { UTASnapshotSummary } from '../api'
+import { getIntlLocale } from '../lib/intl'
 
 // ==================== Props ====================
 
@@ -170,7 +171,7 @@ function fmtStr(s: string, currency?: string): string {
   const n = Number(s)
   if (isNaN(n)) return s
   const sym = currencySymbol(currency)
-  return `${sym}${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return `${sym}${n.toLocaleString(getIntlLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 function fmtPnlStr(s: string, currency?: string): string {
@@ -178,5 +179,5 @@ function fmtPnlStr(s: string, currency?: string): string {
   if (isNaN(n)) return s
   const sym = currencySymbol(currency)
   const sign = n >= 0 ? '+' : ''
-  return `${sign}${sym}${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return `${sign}${sym}${n.toLocaleString(getIntlLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }

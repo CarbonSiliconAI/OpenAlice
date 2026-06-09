@@ -19,14 +19,14 @@ export interface NewsToolContext {
 }
 
 export interface GlobNewsResult {
-  index: number
+  id: number
   title: string
   contentLength: number
   metadata: string
 }
 
 export interface GrepNewsResult {
-  index: number
+  id: number
   title: string
   matchedText: string
   contentLength: number
@@ -59,13 +59,12 @@ export async function globNews(
   const regex = new RegExp(options.pattern, 'i')
   const results: GlobNewsResult[] = []
 
-  for (let i = 0; i < news.length; i++) {
-    const item = news[i]
+  for (const item of news) {
     if (options.metadataFilter && !matchesMetadataFilter(item.metadata, options.metadataFilter)) continue
     if (!regex.test(item.title)) continue
 
     results.push({
-      index: i,
+      id: item.id,
       title: item.title,
       contentLength: item.content.length,
       metadata: truncateMetadata(item.metadata),
@@ -92,8 +91,7 @@ export async function grepNews(
   const contextChars = options.contextChars ?? 50
   const results: GrepNewsResult[] = []
 
-  for (let i = 0; i < news.length; i++) {
-    const item = news[i]
+  for (const item of news) {
     if (options.metadataFilter && !matchesMetadataFilter(item.metadata, options.metadataFilter)) continue
 
     const searchText = `${item.title}\n${item.content}`
@@ -111,7 +109,7 @@ export async function grepNews(
     if (contextEnd < searchText.length) matchedText += '...'
 
     results.push({
-      index: i,
+      id: item.id,
       title: item.title,
       matchedText,
       contentLength: item.content.length,
@@ -126,14 +124,13 @@ export async function grepNews(
   return results
 }
 
-/** Read full news content by index (like "cat") */
+/** Read full news content by stable id (like "cat") */
 export async function readNews(
   context: NewsToolContext,
-  options: { index: number },
+  options: { id: number },
 ): Promise<NewsItem | null> {
   const news = await context.getNews()
-  if (options.index < 0 || options.index >= news.length) return null
-  return news[options.index]
+  return news.find((item) => item.id === options.id) ?? null
 }
 
 // ==================== AI Tool factory ====================
@@ -143,19 +140,23 @@ export function createNewsArchiveTools(provider: INewsProvider) {
     globNews: tool({
       description: `Search collected news archive by title pattern (like "ls" / "glob").
 
-Returns matching headlines with index, title, content length, and metadata preview.
+Returns matching headlines with a stable \`id\`, title, content length, and metadata preview.
+Pass an \`id\` to readNews to read the full article — the id is stable across calls,
+so you do NOT need to repeat your \`lookback\`.
 Use this to quickly scan what's been happening in the market.
 
-Time range control:
-- lookback: "1h", "2h", "12h", "1d", "7d" (default: all available news)
+Search pool: the most recent ${NEWS_LIMIT} items within \`lookback\` (or the
+most recent ${NEWS_LIMIT} overall when \`lookback\` is omitted). Older items
+within the lookback window are NOT searched. Your \`limit\` then bounds the
+match count returned from that pool.
 
 Example: globNews({ pattern: "BTC|Bitcoin", lookback: "1d" })`,
       inputSchema: z.object({
         pattern: z.string().describe('Regex to match against news titles'),
-        lookback: z.string().optional().describe('Time range: "1h", "12h", "1d", "7d"'),
+        lookback: z.string().optional().describe(`Time range: "1h", "12h", "1d", "7d" (searches up to ${NEWS_LIMIT} most recent items in the window)`),
         metadataFilter: z.record(z.string(), z.string()).optional().describe('Filter by metadata key-value'),
         limit: z.number().int().positive().optional().describe('Max results'),
-      }),
+      }).meta({ examples: [{ pattern: 'BTC|Bitcoin', lookback: '1d' }] }),
       execute: async ({ pattern, lookback, metadataFilter, limit }) => {
         return globNews(
           { getNews: () => provider.getNewsV2({ endTime: new Date(), lookback, limit: NEWS_LIMIT }) },
@@ -170,14 +171,18 @@ Example: globNews({ pattern: "BTC|Bitcoin", lookback: "1d" })`,
 Returns matched text with surrounding context.
 Use this to find specific mentions in news articles.
 
+Search pool: the most recent ${NEWS_LIMIT} items within \`lookback\` (or the
+most recent ${NEWS_LIMIT} overall when \`lookback\` is omitted). Older items
+within the lookback window are NOT searched.
+
 Example: grepNews({ pattern: "interest rate", lookback: "2d" })`,
       inputSchema: z.object({
         pattern: z.string().describe('Regex to search in title and content'),
-        lookback: z.string().optional().describe('Time range: "1h", "12h", "1d", "7d"'),
+        lookback: z.string().optional().describe(`Time range: "1h", "12h", "1d", "7d" (searches up to ${NEWS_LIMIT} most recent items in the window)`),
         contextChars: z.number().int().positive().optional().describe('Context chars around match (default: 50)'),
         metadataFilter: z.record(z.string(), z.string()).optional().describe('Filter by metadata key-value'),
         limit: z.number().int().positive().optional().describe('Max results'),
-      }),
+      }).meta({ examples: [{ pattern: 'interest rate', lookback: '2d' }] }),
       execute: async ({ pattern, lookback, contextChars, metadataFilter, limit }) => {
         return grepNews(
           { getNews: () => provider.getNewsV2({ endTime: new Date(), lookback, limit: NEWS_LIMIT }) },
@@ -187,20 +192,20 @@ Example: grepNews({ pattern: "interest rate", lookback: "2d" })`,
     }),
 
     readNews: tool({
-      description: `Read full content of a collected news item by index (like "cat").
+      description: `Read full content of a collected news item by stable id (like "cat").
 
-Use after globNews/grepNews to read a specific article.
-Use the same lookback as your previous query for consistent indices.`,
+Use after globNews/grepNews to read a specific article — pass the \`id\` from their
+results. The id is stable, so it resolves regardless of what \`lookback\` you used
+to find the item (no need to repeat it).`,
       inputSchema: z.object({
-        index: z.number().int().nonnegative().describe('News index from globNews/grepNews results'),
-        lookback: z.string().optional().describe('Match the lookback from your prior globNews/grepNews call'),
-      }),
-      execute: async ({ index, lookback }) => {
+        id: z.number().int().nonnegative().describe('Stable news id from globNews/grepNews results'),
+      }).meta({ examples: [{ id: 0 }] }),
+      execute: async ({ id }) => {
         const result = await readNews(
-          { getNews: () => provider.getNewsV2({ endTime: new Date(), lookback, limit: NEWS_LIMIT }) },
-          { index },
+          { getNews: () => provider.getNewsV2({ endTime: new Date(), limit: NEWS_LIMIT }) },
+          { id },
         )
-        return result ?? { error: `News index ${index} not found` }
+        return result ?? { error: `News id ${id} not found` }
       },
     }),
   }

@@ -1,8 +1,7 @@
 /**
  * MCP Export — shared bridge from Vercel AI SDK tools to MCP format.
  *
- * Used by both `src/server/mcp.ts` (external MCP server) and
- * `src/ai-providers/agent-sdk/tool-bridge.ts` (Agent SDK in-process MCP).
+ * Used by `src/server/mcp.ts` (the external MCP server workspaces connect to).
  *
  * Handles:
  * - Zod shape extraction with number coercion (MCP clients may send "80" instead of 80)
@@ -29,7 +28,8 @@ export type McpToolResult = {
 /**
  * Convert a Vercel AI SDK tool result to MCP content blocks.
  *
- * If the result has a `.content` array (OpenClaw AgentToolResult format),
+ * If the result has a `.content` array (the multi-modal AgentToolResult
+ * shape — `{ content: [{type:"text",...}|{type:"image",...}, ...] }`),
  * map each item to native MCP text/image blocks. This avoids stringify-ing
  * base64 image data into a giant JSON text blob.
  *

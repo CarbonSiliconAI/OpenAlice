@@ -301,6 +301,30 @@ export class IndicatorCalculator {
         evaluatedArgs[3] as number,
       )
 
+    // Volume (right-side) indicators
+    if (name === 'RVOL')
+      return Technical.RVOL(evaluatedArgs[0] as number[] | TrackedValues, evaluatedArgs[1] as number)
+    if (name === 'OBV')
+      return Technical.OBV(
+        evaluatedArgs[0] as number[] | TrackedValues,
+        evaluatedArgs[1] as number[] | TrackedValues,
+      )
+    if (name === 'MFI')
+      return Technical.MFI(
+        evaluatedArgs[0] as number[] | TrackedValues,
+        evaluatedArgs[1] as number[] | TrackedValues,
+        evaluatedArgs[2] as number[] | TrackedValues,
+        evaluatedArgs[3] as number[] | TrackedValues,
+        evaluatedArgs[4] as number,
+      )
+    if (name === 'VWAP')
+      return Technical.VWAP(
+        evaluatedArgs[0] as number[] | TrackedValues,
+        evaluatedArgs[1] as number[] | TrackedValues,
+        evaluatedArgs[2] as number[] | TrackedValues,
+        evaluatedArgs[3] as number[] | TrackedValues,
+      )
+
     throw new Error(`Unknown function: ${name}`)
   }
 

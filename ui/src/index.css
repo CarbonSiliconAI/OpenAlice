@@ -25,10 +25,86 @@
     monospace;
 }
 
+/* Japanese gets a JP-first sans stack so shared Han characters render in
+   Japanese glyph forms, not the Simplified-Chinese forms the default stack
+   would pick (Han unification). Scoped via <html lang="ja">, which the locale
+   store keeps in sync. */
+:root:lang(ja) {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", "YuGothic",
+    "Meiryo", "Noto Sans JP", sans-serif;
+}
+
+/* Traditional Chinese (Hant script) gets a Traditional-first sans stack so
+   shared Han characters render in Traditional forms, not the Simplified ones
+   the default stack would pick. Scoped via <html lang="zh-Hant"> — region-
+   neutral (serves both Taiwan and Hong Kong Traditional readers). */
+:root:lang(zh-Hant) {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "PingFang TC", "Microsoft JhengHei", "Noto Sans TC",
+    "Noto Sans CJK TC", sans-serif;
+}
+
 html,
 body,
 #root {
   height: 100%;
+}
+
+/* ==================== Typography scale ====================
+   Five semantic sizes covering the entire app. New code should
+   prefer these over arbitrary `text-[Npx]` so size choices stay
+   consistent and a future global tweak is one edit.
+   - .text-display  hero numbers (UTA NLV, Portfolio total)
+   - .text-title    page H2 / dialog title
+   - .text-body     primary body text, table rows, buttons
+   - .text-caption  secondary descriptions, subtitles
+   - .text-micro    badges, timestamps, table metadata */
+
+.text-display {
+  @apply text-[28px] md:text-[36px] font-bold leading-tight tabular-nums;
+}
+.text-title {
+  @apply text-[16px] font-semibold leading-snug;
+}
+.text-body {
+  @apply text-[13px] leading-relaxed;
+}
+.text-caption {
+  @apply text-[12px] leading-relaxed;
+}
+.text-micro {
+  @apply text-[11px] tracking-wide;
+}
+
+/* ==================== Live-data pulse ====================
+   Small breathing dot used in PageHeader to communicate "this
+   surface is auto-refreshing". 2.4s cycle so it reads as ambient
+   not anxious. Color is the success/green token to keep the
+   association with "alive + healthy". */
+
+@keyframes live-pulse {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+.live-pulse {
+  animation: live-pulse 2.4s ease-in-out infinite;
+}
+.live-pulse::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  background: var(--color-green);
+  opacity: 0.3;
+  animation: live-pulse 2.4s ease-in-out infinite;
+  animation-delay: 0.3s;
 }
 
 /* ==================== Button utility classes ==================== */
@@ -82,6 +158,17 @@ body,
   border-radius: 3px;
 }
 
+/* Hide scrollbar utility — content still scrolls (programmatically or via
+   wheel/trackpad), the bar itself just doesn't render. Used on the tab
+   strip so a long row of tabs doesn't reserve a thick horizontal track. */
+.scrollbar-hide {
+  scrollbar-width: none;       /* Firefox */
+  -ms-overflow-style: none;    /* IE / old Edge */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;               /* Chromium / WebKit */
+}
+
 /* Markdown content inside assistant messages */
 .markdown-content p {
   margin: 0.5em 0;
@@ -114,6 +201,16 @@ body,
 .markdown-content ol {
   padding-left: 1.5em;
   margin: 0.5em 0;
+}
+/* Obsidian-style [[name]] wikilinks → clickable entity references. */
+.markdown-content a.wikilink {
+  color: var(--color-accent);
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px dashed color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+.markdown-content a.wikilink:hover {
+  border-bottom-style: solid;
 }
 .markdown-content blockquote {
   border-left: 3px solid var(--color-accent);

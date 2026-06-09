@@ -30,20 +30,24 @@ export interface MountOpenTypeBBOptions {
   /**
    * Credentials injected into every request that does not supply its own
    * `X-OpenBB-Credentials` header — typically the server-side provider keys.
+   * Pass a getter to have it evaluated per-request (config changes take
+   * effect without remounting / restarting).
    */
-  defaultCredentials: Record<string, string>
+  defaultCredentials: Record<string, string> | (() => Record<string, string>)
   /**
    * Per-asset-class default provider, used when the request omits `?provider=`.
    * The asset class is the first path segment after `basePath`.
+   * Pass a getter for live config updates.
    */
-  defaultProviders: DefaultProviders
+  defaultProviders: DefaultProviders | (() => DefaultProviders)
 }
 
 function makeProviderResolver(
   basePath: string,
-  providers: DefaultProviders,
+  getProviders: () => DefaultProviders,
 ): (path: string) => string | undefined {
   return (path: string) => {
+    const providers = getProviders()
     const sub = path.slice(basePath.length).replace(/^\/+/, '').split('/')[0]
     switch (sub) {
       case 'equity':
@@ -71,8 +75,17 @@ export function mountOpenTypeBB(
   const rootRouter = loadAllRouters()
   const registry = createRegistry()
 
-  const resolveProvider = makeProviderResolver(opts.basePath, opts.defaultProviders)
-  rootRouter.mountToHono(app, executor, opts.basePath, opts.defaultCredentials, resolveProvider)
+  const getProviders =
+    typeof opts.defaultProviders === 'function'
+      ? opts.defaultProviders
+      : () => opts.defaultProviders as DefaultProviders
+  const getCredentials =
+    typeof opts.defaultCredentials === 'function'
+      ? opts.defaultCredentials
+      : () => opts.defaultCredentials as Record<string, string>
+
+  const resolveProvider = makeProviderResolver(opts.basePath, getProviders)
+  rootRouter.mountToHono(app, executor, opts.basePath, getCredentials, resolveProvider)
 
   const widgetsJson = buildWidgetsJson(rootRouter, registry)
   app.get(`${opts.basePath}/widgets.json`, (c) => c.json(widgetsJson))

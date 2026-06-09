@@ -60,7 +60,12 @@ export async function getPredefinedScreener(
   for (let attempt = 0; attempt < 2; attempt++) {
     const yf = getYF()
     try {
-      result = await (yf as any).screener({ scrIds: scrId, count })
+      // validateResult: false — Yahoo keeps adding fields to the screener
+      // response (predefined screeners gained a large includeFields set),
+      // tripping yahoo-finance2's strict ScreenerResult schema. Same treatment
+      // as search() below. We only read the whitelisted SCREENER_FIELDS anyway.
+      // moduleOptions (validateResult) is the THIRD arg — screener(overrides, queryOpts, moduleOpts).
+      result = await (yf as any).screener({ scrIds: scrId, count }, undefined, { validateResult: false })
       recordYFSuccess()
       break
     } catch (err) {
@@ -104,6 +109,26 @@ export async function getPredefinedScreener(
     for (const k of SCREENER_FIELDS) {
       result[k] = item[k] ?? null
     }
+
+    // Derive right-side volume reads while the raw yahoo keys are still present.
+    // These snake_case keys aren't in the alias dict, so they pass straight
+    // through applyAliases + the schema's passthrough() to the consumer.
+    const vol = result.regularMarketVolume
+    const avgVol = result.averageDailyVolume3Month
+    const sharesOut = result.sharesOutstanding
+    const price = result.regularMarketPrice
+    result.relative_volume =
+      typeof vol === 'number' && typeof avgVol === 'number' && avgVol > 0 ? vol / avgVol : null
+    result.turnover =
+      typeof vol === 'number' && typeof sharesOut === 'number' && sharesOut > 0
+        ? vol / sharesOut
+        : null
+    // dollar_volume (price × volume) is the cross-ticker-comparable absolute:
+    // raw share volume isn't (1M shares means different money at $5 vs $500).
+    // This is the unit that aggregates to a sector. relative_volume answers
+    // "unusual for itself?"; dollar_volume answers "how much money is here?".
+    result.dollar_volume =
+      typeof vol === 'number' && typeof price === 'number' ? vol * price : null
 
     if (result.regularMarketChange != null && result.regularMarketVolume != null) {
       output.push(result)
@@ -242,11 +267,21 @@ export async function searchYahooFinance(
 }
 
 /**
- * Convert a camelCase string to snake_case.
- * Maps to: openbb_core.provider.utils.helpers.to_snake_case
+ * Convert a camelCase string to snake_case, preserving acronyms.
+ * `EBITDA` → `ebitda` (not `e_b_i_t_d_a`),
+ * `totalRevenue` → `total_revenue`,
+ * `EBITDAMargin` → `ebitda_margin`.
+ *
+ * Maps to: openbb_core.provider.utils.helpers.to_snake_case.
  */
 function toSnakeCase(s: string): string {
-  return s.replace(/([A-Z])/g, '_$1').toLowerCase().replace(/^_/, '')
+  return s
+    // boundary between a run of caps and a following word (EBITDAMargin → EBITDA_Margin)
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    // boundary between a lowercase/digit and an uppercase (totalRevenue → total_Revenue)
+    .replace(/([a-z\d])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .replace(/^_/, '')
 }
 
 /**

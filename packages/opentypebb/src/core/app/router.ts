@@ -160,15 +160,24 @@ export class Router {
    *     if supplied; else empty string (executor will surface a "provider required" error).
    *   - Credentials from X-OpenBB-Credentials header, falling back to
    *     `defaultCredentials` when the header is absent or malformed.
+   *     Pass a function to have it evaluated per-request (picks up config
+   *     changes without remounting).
    */
   mountToHono(
     app: Hono,
     executor: QueryExecutor,
     basePath = '/api/v1',
-    defaultCredentials: Record<string, string> | null = null,
+    defaultCredentials:
+      | Record<string, string>
+      | null
+      | (() => Record<string, string> | null) = null,
     resolveProvider?: (path: string, basePath: string) => string | undefined,
   ): void {
     const commands = this.getCommandMap(basePath)
+    const getDefaultCredentials =
+      typeof defaultCredentials === 'function'
+        ? defaultCredentials
+        : () => defaultCredentials
 
     for (const [path, cmd] of commands) {
       app.get(path, async (c) => {
@@ -185,9 +194,10 @@ export class Router {
         const provider = queryProvider || resolveProvider?.(path, basePath) || ''
         delete params.provider
 
-        // Parse credentials from header; fall back to defaults when missing.
+        // Parse credentials from header; fall back to defaults (re-evaluated
+        // per request so config edits take effect without a restart).
         const credHeader = c.req.header('X-OpenBB-Credentials')
-        let credentials: Record<string, string> | null = defaultCredentials
+        let credentials: Record<string, string> | null = getDefaultCredentials()
         if (credHeader) {
           try {
             credentials = JSON.parse(credHeader)

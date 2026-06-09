@@ -9,6 +9,7 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 import type { EquityClientLike } from '@/domain/market-data/client/types'
+import type { EquityDiscoveryData } from '@traderalice/opentypebb'
 
 export function createEquityTools(equityClient: EquityClientLike) {
   return {
@@ -21,7 +22,7 @@ combined with key metrics (market cap, PE ratio, PB ratio, EV/EBITDA, dividend y
 If unsure about the symbol, use marketSearchForResearch to find it.`,
       inputSchema: z.object({
         symbol: z.string().describe('Ticker symbol, e.g. "AAPL", "MSFT"'),
-      }),
+      }).meta({ examples: [{ symbol: 'AAPL' }] }),
       execute: async ({ symbol }) => {
         const [profile, metrics] = await Promise.all([
           equityClient.getProfile({ symbol, provider: 'yfinance' }).catch(() => []),
@@ -43,7 +44,7 @@ If unsure about the symbol, use marketSearchForResearch to find it.`,
         type: z.enum(['income', 'balance', 'cash']).describe('Statement type: "income" for income statement, "balance" for balance sheet, "cash" for cash flow'),
         period: z.enum(['annual', 'quarter']).optional().describe('Fiscal period (default: annual)'),
         limit: z.number().int().positive().optional().describe('Number of periods to return (default: 5)'),
-      }),
+      }).meta({ examples: [{ symbol: 'AAPL', type: 'income', period: 'annual', limit: 5 }] }),
       execute: async ({ symbol, type, period, limit }) => {
         const params: Record<string, unknown> = { symbol, provider: 'yfinance' }
         if (period) params.period = period
@@ -63,18 +64,29 @@ If unsure about the symbol, use marketSearchForResearch to find it.`,
     equityGetRatios: tool({
       description: `Get financial ratios for a company.
 
-Returns profitability ratios (ROE, ROA, gross margin, net margin, operating margin),
-liquidity ratios (current ratio, quick ratio), leverage ratios (debt/equity),
-and efficiency ratios (asset turnover, inventory turnover).
+Returns profitability ratios (ROE, ROA, gross/net/operating margin),
+liquidity ratios (current ratio, quick ratio), leverage ratios (debt/equity,
+debt/assets), valuation (P/E, P/B, P/S, dividend yield), and more (a curated
+set with clean names, plus any extra ratios the provider returns passed
+through under their raw names).
+
+By default returns the trailing-twelve-month (TTM) snapshot PLUS \`limit\`
+historical periods. Use \`ttm\` to change that: "include" (default, TTM + the
+historical series), "exclude" (historical series only, no TTM), "only" (just
+the single TTM snapshot — \`period\`/\`limit\` are ignored in this mode).
 
 If unsure about the symbol, use marketSearchForResearch to find it.`,
       inputSchema: z.object({
         symbol: z.string().describe('Ticker symbol, e.g. "AAPL"'),
-        period: z.enum(['annual', 'quarter']).optional().describe('Fiscal period (default: annual)'),
-        limit: z.number().int().positive().optional().describe('Number of periods to return (default: 5)'),
-      }),
-      execute: async ({ symbol, period, limit }) => {
-        const params: Record<string, unknown> = { symbol, provider: 'fmp' }
+        period: z.enum(['annual', 'quarter']).optional().describe('Fiscal period for the historical series (default: annual)'),
+        limit: z.number().int().positive().optional().describe('Number of historical periods to return (default: 5; ignored when ttm="only")'),
+        ttm: z.enum(['include', 'exclude', 'only']).optional().describe('TTM handling: "include" (default — TTM + history), "exclude" (history only), "only" (TTM snapshot only)'),
+      }).meta({ examples: [{ symbol: 'AAPL', period: 'annual', limit: 5 }] }),
+      execute: async ({ symbol, period, limit, ttm }) => {
+        // The FMP fetcher defaults ttm to "only" (a single TTM row, with
+        // period/limit dead). Default to "include" here so the historical
+        // series — and therefore period/limit — actually come through.
+        const params: Record<string, unknown> = { symbol, provider: 'fmp', ttm: ttm ?? 'include' }
         if (period) params.period = period
         if (limit) params.limit = limit
         return await equityClient.getFinancialRatios(params)
@@ -92,7 +104,7 @@ Can be queried by symbol (specific company) or by date range (market-wide).`,
         symbol: z.string().optional().describe('Ticker symbol to check (omit for market-wide calendar)'),
         start_date: z.string().optional().describe('Start date in YYYY-MM-DD format'),
         end_date: z.string().optional().describe('End date in YYYY-MM-DD format'),
-      }),
+      }).meta({ examples: [{ symbol: 'AAPL' }] }),
       execute: async ({ symbol, start_date, end_date }) => {
         const params: Record<string, unknown> = { provider: 'fmp' }
         if (symbol) params.symbol = symbol
@@ -112,7 +124,7 @@ If unsure about the symbol, use marketSearchForResearch to find it.`,
       inputSchema: z.object({
         symbol: z.string().describe('Ticker symbol, e.g. "AAPL"'),
         limit: z.number().int().positive().optional().describe('Number of transactions to return (default: 20)'),
-      }),
+      }).meta({ examples: [{ symbol: 'AAPL', limit: 20 }] }),
       execute: async ({ symbol, limit }) => {
         const params: Record<string, unknown> = { symbol, provider: 'fmp' }
         if (limit) params.limit = limit
@@ -123,20 +135,53 @@ If unsure about the symbol, use marketSearchForResearch to find it.`,
     equityDiscover: tool({
       description: `Discover trending stocks in the market right now.
 
-Returns top gainers, losers, or most actively traded stocks.
-Use this to get a pulse on what the market is trading today.`,
+Returns top gainers, losers, or most actively traded stocks. Use this to get a
+pulse on what the market is trading today.
+
+Each row carries volume-context fields beyond raw price/volume. Volume has two
+orthogonal readings — use the one that fits the question:
+- relative_volume — today's volume / its 3-month average. The RELATIVE,
+  intra-ticker read: "is this name unusual for itself?". raw "most active" is
+  just the usual mega-caps (AAPL, TSLA always trade billions); relative_volume
+  >2 surfaces genuine anomalies. Use for event/spike detection.
+- dollar_volume — price × volume (traded notional). The ABSOLUTE,
+  cross-ticker-comparable read: "how much money is actually here?". This is the
+  unit that compares across tickers and aggregates to a sector (raw share
+  volume can't — 1M shares is different money at $5 vs $500). Use for capital
+  weight / cross-sector work / tradability.
+- turnover — volume / shares outstanding (more sensitive for small caps).
+- avg_volume — the 3-month baseline.
+
+Set sortBy to re-rank: "relative_volume" for unusual volume, "dollar_volume"
+for where the money is. Default keeps the provider ranking (price move for
+gainers/losers, absolute share volume for active). Volume-context fields are
+populated on the default yfinance data only.`,
       inputSchema: z.object({
-        type: z.enum(['gainers', 'losers', 'active']).describe('"gainers" for top price gainers, "losers" for top losers, "active" for most actively traded by volume'),
-      }),
-      execute: async ({ type }) => {
+        type: z.enum(['gainers', 'losers', 'active']).describe('"gainers" for top price gainers, "losers" for top losers, "active" for most actively traded by absolute volume'),
+        sortBy: z.enum(['default', 'relative_volume', 'dollar_volume']).optional().describe('"default" keeps the provider ranking; "relative_volume" re-ranks by unusual volume (today vs 3-month avg); "dollar_volume" re-ranks by traded notional (price × volume) — where the money actually is'),
+      }).meta({ examples: [{ type: 'active', sortBy: 'relative_volume' }] }),
+      execute: async ({ type, sortBy }) => {
+        let rows: EquityDiscoveryData[]
         switch (type) {
           case 'gainers':
-            return await equityClient.getGainers()
+            rows = await equityClient.getGainers()
+            break
           case 'losers':
-            return await equityClient.getLosers()
+            rows = await equityClient.getLosers()
+            break
           case 'active':
-            return await equityClient.getActive()
+            rows = await equityClient.getActive()
+            break
         }
+
+        if (sortBy === 'relative_volume' || sortBy === 'dollar_volume') {
+          // Re-rank by the chosen volume axis; rows missing it sink to the bottom.
+          rows = [...rows].sort(
+            (a, b) => (b[sortBy] ?? -Infinity) - (a[sortBy] ?? -Infinity),
+          )
+        }
+
+        return rows
       },
     }),
   }

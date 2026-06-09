@@ -28,7 +28,10 @@ interface EiaResponse {
   response?: {
     data?: Array<{
       period: string
-      value: number | null
+      // EIA API serialises numeric observations as strings ("75.10"), with
+      // null only for missing periods. Coerce in extractData; the schema
+      // expects number.
+      value: string | number | null
       'series-description'?: string
     }>
   }
@@ -47,12 +50,16 @@ export class EIAPetroleumStatusReportFetcher extends Fetcher {
     const catInfo = CATEGORY_SERIES[query.category]
     if (!catInfo) throw new EmptyDataError(`Unknown category: ${query.category}`)
 
+    // EIA API v2 takes PHP-style bracket params, not JSON-encoded sort —
+    // see https://www.eia.gov/opendata/documentation.php. The JSON form
+    // is silently rejected with HTTP 403 on most endpoints.
     const params = new URLSearchParams({
       api_key: apiKey,
       frequency: 'weekly',
       'data[0]': 'value',
       'facets[series][]': catInfo.series,
-      sort: JSON.stringify([{ column: 'period', direction: 'desc' }]),
+      'sort[0][column]': 'period',
+      'sort[0][direction]': 'desc',
       length: '260', // ~5 years of weekly data
     })
 
@@ -65,9 +72,11 @@ export class EIAPetroleumStatusReportFetcher extends Fetcher {
     const results: Record<string, unknown>[] = []
     for (const obs of data.response?.data ?? []) {
       if (obs.value == null) continue
+      const value = typeof obs.value === 'string' ? parseFloat(obs.value) : obs.value
+      if (Number.isNaN(value)) continue
       results.push({
         date: obs.period,
-        value: obs.value,
+        value,
         category: query.category,
         unit: catInfo.unit,
       })

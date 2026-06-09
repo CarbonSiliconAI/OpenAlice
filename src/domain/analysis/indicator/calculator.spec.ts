@@ -219,6 +219,40 @@ describe('technical indicators', () => {
   })
 })
 
+// ==================== 成交量指标（右侧） ====================
+
+describe('volume indicators', () => {
+  it('RVOL returns latest volume relative to its baseline (>1 here, volume trends up)', async () => {
+    const result = (await calc("RVOL(VOLUME('AAPL', '1d'), 20)")).value as number
+    expect(typeof result).toBe('number')
+    expect(result).toBeGreaterThan(1)
+    expect(result).toBeLessThan(2)
+  })
+
+  it('OBV sums volume on up-closes — mock rises monotonically, so = Σ volume[1..49]', async () => {
+    // closes strictly increasing → every bar adds its volume; bar 48 volume is null→0
+    const result = (await calc("OBV(CLOSE('AAPL', '1d'), VOLUME('AAPL', '1d'))")).value as number
+    expect(result).toBe(59770)
+  })
+
+  it('MFI is 100 when typical price rises monotonically (all positive money flow)', async () => {
+    const result = (await calc("MFI(HIGH('AAPL', '1d'), LOW('AAPL', '1d'), CLOSE('AAPL', '1d'), VOLUME('AAPL', '1d'), 14)")).value as number
+    expect(result).toBe(100)
+  })
+
+  it('VWAP returns a volume-weighted price inside the price range', async () => {
+    const result = (await calc("VWAP(HIGH('AAPL', '1d'), LOW('AAPL', '1d'), CLOSE('AAPL', '1d'), VOLUME('AAPL', '1d'))")).value as number
+    expect(typeof result).toBe('number')
+    // typical price spans ~100→149; higher-volume bars sit at the top, so VWAP skews high
+    expect(result).toBeGreaterThan(124)
+    expect(result).toBeLessThan(150)
+  })
+
+  it('RVOL throws on insufficient data', async () => {
+    await expect(calc("RVOL(VOLUME('AAPL', '1d'), 100)")).rejects.toThrow(/RVOL requires/)
+  })
+})
+
 // ==================== 复合表达式 ====================
 
 describe('complex expressions', () => {

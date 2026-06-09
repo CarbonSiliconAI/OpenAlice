@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
+import { formatRelativeTime, getIntlLocale } from '../lib/intl'
 import { api } from '../api'
+import { isUnsetDecimal } from '../lib/format'
 import type { TradingAccount, WalletStatus, WalletPushResult, WalletCommitLog } from '../api/types'
 
 // ==================== Types ====================
@@ -30,31 +32,14 @@ function opSymbol(op: WalletStatus['staged'][number]): string {
   return sep !== -1 ? raw.slice(sep + 1) : raw
 }
 
-/**
- * Format quantity/price for display.
- * Strings pass through (backend already Decimal-serialized).
- * Numbers go through toFixed(8) + trim to avoid IEEE 754 artifacts and
- * the default toLocaleString behavior that truncates decimals to 3 (which
- * turns crypto-scale quantities like 0.00012345 into "0").
- */
-const IBKR_SENTINELS = new Set([
-  '1.70141183460469231731687303715884105727e+38',  // UNSET_DECIMAL  (2^127 - 1)
-  '1.7976931348623157e+308',                        // UNSET_DOUBLE   (Number.MAX_VALUE)
-  '2147483647',                                     // UNSET_INTEGER  (INT32_MAX)
-])
-
 function fmtNum(n: number | string | undefined | null): string {
   if (n == null || n === '') return ''
-  if (typeof n === 'string') {
-    if (IBKR_SENTINELS.has(n)) return ''
-    return n
-  }
-  if (!Number.isFinite(n)) return ''
-  // Also catch numeric forms of the sentinels in case backend ever ships them un-stringified.
-  if (n > 1e30 || n === 2147483647) return ''
+  if (isUnsetDecimal(n)) return ''
+  if (typeof n === 'string') return n
+  if (!Number.isFinite(n)) return String(n)
   const rounded = n.toFixed(8).replace(/\.?0+$/, '')
   const [intPart, decPart] = rounded.split('.')
-  const withCommas = Number(intPart).toLocaleString('en-US')
+  const withCommas = Number(intPart).toLocaleString(getIntlLocale())
   return decPart ? `${withCommas}.${decPart}` : withCommas
 }
 
@@ -68,9 +53,7 @@ function formatOp(op: WalletStatus['staged'][number]): { text: string; side?: 'b
       const type = (op.order?.orderType || '').toUpperCase()
       const typeBadge = type === 'MKT' || type === 'MARKET' ? 'MKT' : type === 'LMT' || type === 'LIMIT' ? 'LMT' : type
       const qtyStr = fmtNum(op.order?.totalQuantity ?? op.order?.cashQty)
-      // Only order types that carry a limit price should display one.
-      const LIMIT_PRICE_TYPES = new Set(['LMT', 'LIMIT', 'STP LMT', 'TRAIL LIMIT'])
-      const priceStr = LIMIT_PRICE_TYPES.has(type) ? fmtNum(op.order?.lmtPrice) : ''
+      const priceStr = fmtNum(op.order?.lmtPrice)
       const price = priceStr ? ` @ ${priceStr}` : ''
       return {
         text: `${sideRaw} ${qtyStr} ${symbol} ${typeBadge}${price}`.trim(),
@@ -92,23 +75,12 @@ function formatOp(op: WalletStatus['staged'][number]): { text: string; side?: 'b
   }
 }
 
-/** Relative time string. */
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
-}
-
 /** Status badge color. */
 function statusColor(status: string): string {
   switch (status) {
     case 'submitted': return 'text-blue-400'
-    case 'filled': return 'text-green-400'
-    case 'rejected': return 'text-red-400'
+    case 'filled': return 'text-green'
+    case 'rejected': return 'text-red'
     case 'user-rejected': return 'text-orange-400'
     case 'cancelled': return 'text-text-muted'
     default: return 'text-text-muted'
@@ -130,7 +102,7 @@ export function PushApprovalPanel() {
 
   const poll = useCallback(async () => {
     try {
-      const { accounts: accts } = await api.trading.listAccounts()
+      const { utas: accts } = await api.trading.listUTAs()
       setAccounts(accts)
 
       const stagedResults: StagedAccount[] = []
@@ -203,7 +175,7 @@ export function PushApprovalPanel() {
   const hasHistory = history.length > 0
 
   return (
-    <div className="w-72 shrink-0 border-l border-border bg-bg-secondary/30 flex flex-col min-h-0">
+    <div className="h-full bg-bg-secondary/30 flex flex-col min-h-0">
       {/* Header */}
       <div className="px-4 py-3 border-b border-border flex items-center gap-2">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted">
@@ -239,7 +211,7 @@ export function PushApprovalPanel() {
                       <div
                         key={i}
                         className={`text-xs font-mono px-2 py-1 rounded bg-bg/50 ${
-                          side === 'buy' ? 'text-green-400' : side === 'sell' ? 'text-red-400' : 'text-text-muted'
+                          side === 'buy' ? 'text-green' : side === 'sell' ? 'text-red' : 'text-text-muted'
                         }`}
                       >
                         {text}
@@ -274,7 +246,7 @@ export function PushApprovalPanel() {
                       <div
                         key={i}
                         className={`text-xs font-mono px-2 py-1 rounded bg-bg/50 ${
-                          side === 'buy' ? 'text-green-400' : side === 'sell' ? 'text-red-400' : 'text-text-muted'
+                          side === 'buy' ? 'text-green' : side === 'sell' ? 'text-red' : 'text-text-muted'
                         }`}
                       >
                         {text}
@@ -313,7 +285,7 @@ export function PushApprovalPanel() {
                     <button
                       onClick={() => handleReject(account.id)}
                       disabled={pushing !== null || rejecting !== null}
-                      className="text-xs px-3 py-1.5 rounded font-medium border border-border text-text-muted hover:text-red-400 hover:border-red-400/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="text-xs px-3 py-1.5 rounded font-medium border border-border text-text-muted hover:text-red hover:border-red/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       {rejecting === account.id ? '...' : 'Reject'}
                     </button>
@@ -328,17 +300,17 @@ export function PushApprovalPanel() {
                 <div className="text-[11px] font-medium text-text-muted uppercase tracking-wider">Last push</div>
                 <div className="text-xs text-text">
                   {lastResult.data.submitted.length > 0 && (
-                    <span className="text-green-400">{lastResult.data.submitted.length} submitted</span>
+                    <span className="text-green">{lastResult.data.submitted.length} submitted</span>
                   )}
                   {lastResult.data.rejected.length > 0 && (
                     <>
                       {lastResult.data.submitted.length > 0 && ', '}
-                      <span className="text-red-400">{lastResult.data.rejected.length} rejected</span>
+                      <span className="text-red">{lastResult.data.rejected.length} rejected</span>
                     </>
                   )}
                 </div>
                 {lastResult.data.rejected.map((r, i) => (
-                  <div key={i} className="text-xs text-red-400/80 px-2">{r.error || 'Unknown error'}</div>
+                  <div key={i} className="text-xs text-red/80 px-2">{r.error || 'Unknown error'}</div>
                 ))}
                 <button onClick={() => setLastResult(null)} className="text-[11px] text-text-muted hover:text-text">
                   Dismiss
@@ -347,7 +319,7 @@ export function PushApprovalPanel() {
             )}
 
             {error && (
-              <div className="text-xs text-red-400 pt-2 border-t border-border">
+              <div className="text-xs text-red pt-2 border-t border-border">
                 {error}
                 <button onClick={() => setError(null)} className="ml-2 text-text-muted hover:text-text">Dismiss</button>
               </div>
@@ -375,7 +347,7 @@ export function PushApprovalPanel() {
                     <div key={commit.hash} className="group px-2 py-1.5 rounded hover:bg-bg-secondary/50 transition-colors">
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-mono text-text-muted/50">{commit.hash}</span>
-                        <span className="text-[10px] text-text-muted/40">{timeAgo(commit.timestamp)}</span>
+                        <span className="text-[10px] text-text-muted/40">{formatRelativeTime(commit.timestamp)}</span>
                       </div>
                       <div className="text-xs text-text mt-0.5 leading-snug">{commit.message}</div>
                       {commit.operations.length > 0 && (

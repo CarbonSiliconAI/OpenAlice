@@ -1,30 +1,39 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import { api, type AppConfig, type CronJob, type CronSchedule } from '../api'
+import { useState, useEffect, useCallback } from 'react'
+import { formatRelativeTime, getIntlLocale } from '../lib/intl'
+import { api, type CronJob, type CronSchedule } from '../api'
 import { Toggle } from '../components/Toggle'
-import { SaveIndicator } from '../components/SaveIndicator'
-import { ConfigSection, Field, inputClass } from '../components/form'
-import { useAutoSave } from '../hooks/useAutoSave'
 import { PageHeader } from '../components/PageHeader'
 import { AutomationFlowSection } from './AutomationFlowSection'
 import { AutomationWebhookSection } from './AutomationWebhookSection'
+import { listWorkspaces, type Workspace } from '../components/workspace/api'
+import { AutomationRunsSection } from './AutomationRunsSection'
+import type { ViewSpec } from '../tabs/types'
+
+type AutomationSection = Extract<ViewSpec, { kind: 'automation' }>['params']['section']
+
+const SECTION_TITLE: Record<AutomationSection, string> = {
+  flow: 'Flow',
+  cron: 'Cron Jobs',
+  webhook: 'Webhook',
+  runs: 'Runs',
+}
+
+const SECTION_DESCRIPTION: Record<AutomationSection, string> = {
+  flow: 'Producer-listener graph for the event bus.',
+  cron: 'Scheduled jobs that fire events on the dispatch bus.',
+  webhook: 'External HTTP triggers routed into the engine.',
+  runs: 'Headless agent runs across workspaces — what the workers are doing.',
+}
 
 // ==================== Helpers ====================
 
 function formatDateTime(ts: number): string {
   const d = new Date(ts)
-  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  const time = d.toLocaleTimeString('en-US', { hour12: false })
+  const date = d.toLocaleDateString(getIntlLocale(), { month: 'short', day: 'numeric' })
+  const time = d.toLocaleTimeString(getIntlLocale(), { hour12: false })
   return `${date} ${time}`
 }
 
-function timeAgo(ts: number | null): string {
-  if (!ts) return '-'
-  const diff = Date.now() - ts
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
-  return `${Math.floor(diff / 86_400_000)}d ago`
-}
 
 function scheduleLabel(s: CronSchedule): string {
   switch (s.kind) {
@@ -32,273 +41,6 @@ function scheduleLabel(s: CronSchedule): string {
     case 'every': return `every ${s.every}`
     case 'cron': return `cron: ${s.cron}`
   }
-}
-
-// ==================== Heartbeat: Status Bar ====================
-
-function StatusBar() {
-  const [enabled, setEnabled] = useState<boolean | null>(null)
-  const [triggering, setTriggering] = useState(false)
-  const [feedback, setFeedback] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    api.heartbeat.status().then(({ enabled }) => setEnabled(enabled)).catch(console.warn)
-  }, [])
-
-  const handleToggle = async (v: boolean) => {
-    try {
-      const result = await api.heartbeat.setEnabled(v)
-      setEnabled(result.enabled)
-    } catch {
-      setError('Failed to toggle heartbeat')
-      setTimeout(() => setError(null), 3000)
-    }
-  }
-
-  const handleTrigger = async () => {
-    setTriggering(true)
-    setFeedback(null)
-    try {
-      await api.heartbeat.trigger()
-      setFeedback('Heartbeat triggered!')
-      setTimeout(() => setFeedback(null), 3000)
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'Trigger failed')
-      setTimeout(() => setFeedback(null), 5000)
-    } finally {
-      setTriggering(false)
-    }
-  }
-
-  return (
-    <div className="bg-bg rounded-lg border border-border p-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-lg">💓</span>
-          <div>
-            <div className="text-sm font-medium text-text">Heartbeat</div>
-            <div className="text-xs text-text-muted">
-              Periodic self-check and autonomous thinking
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          {feedback && (
-            <span className={`text-xs ${feedback.includes('failed') || feedback.includes('not found') ? 'text-red' : 'text-green'}`}>
-              {feedback}
-            </span>
-          )}
-
-          {error && <span className="text-xs text-red">{error}</span>}
-
-          <button
-            onClick={handleTrigger}
-            disabled={triggering}
-            className="btn-secondary-sm"
-          >
-            {triggering ? 'Triggering...' : 'Trigger Now'}
-          </button>
-
-          {enabled !== null && (
-            <Toggle checked={enabled} onChange={handleToggle} />
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ==================== Heartbeat: Config Form ====================
-
-function HeartbeatConfigForm({ config }: { config: AppConfig }) {
-  const [every, setEvery] = useState(config.heartbeat?.every || '30m')
-  const [ahEnabled, setAhEnabled] = useState(config.heartbeat?.activeHours != null)
-  const [ahStart, setAhStart] = useState(config.heartbeat?.activeHours?.start || '09:00')
-  const [ahEnd, setAhEnd] = useState(config.heartbeat?.activeHours?.end || '22:00')
-  const [ahTimezone, setAhTimezone] = useState(config.heartbeat?.activeHours?.timezone || 'local')
-
-  const configData = useMemo(() => ({
-    ...config.heartbeat,
-    every,
-    activeHours: ahEnabled ? { start: ahStart, end: ahEnd, timezone: ahTimezone } : null,
-  }), [config.heartbeat, every, ahEnabled, ahStart, ahEnd, ahTimezone])
-
-  const save = useCallback(async (d: Record<string, unknown>) => {
-    await api.config.updateSection('heartbeat', d)
-  }, [])
-
-  const { status, retry } = useAutoSave({ data: configData, save })
-
-  return (
-    <ConfigSection title="Configuration" description="Set how often the heartbeat runs and optionally restrict it to active hours.">
-      <Field label="Interval">
-        <input
-          className={inputClass}
-          value={every}
-          onChange={(e) => setEvery(e.target.value)}
-          placeholder="30m"
-        />
-      </Field>
-
-      <div className="mb-3">
-        <div className="flex items-center justify-between mb-2">
-          <label className="text-[13px] text-text font-medium">Active Hours</label>
-          <Toggle checked={ahEnabled} onChange={setAhEnabled} />
-        </div>
-        {ahEnabled && (
-          <div className="flex gap-2 items-end">
-            <div className="flex-1">
-              <label className="block text-[11px] text-text-muted mb-1">Start</label>
-              <input
-                className={inputClass}
-                value={ahStart}
-                onChange={(e) => setAhStart(e.target.value)}
-                placeholder="09:00"
-              />
-            </div>
-            <div className="flex-1">
-              <label className="block text-[11px] text-text-muted mb-1">End</label>
-              <input
-                className={inputClass}
-                value={ahEnd}
-                onChange={(e) => setAhEnd(e.target.value)}
-                placeholder="22:00"
-              />
-            </div>
-            <div className="flex-1">
-              <label className="block text-[11px] text-text-muted mb-1">Timezone</label>
-              <select
-                className={inputClass}
-                value={ahTimezone}
-                onChange={(e) => setAhTimezone(e.target.value)}
-              >
-                <option value="local">Local</option>
-                <option value="UTC">UTC</option>
-                <option value="America/New_York">US Eastern</option>
-                <option value="America/Chicago">US Central</option>
-                <option value="America/Los_Angeles">US Pacific</option>
-                <option value="Europe/London">London</option>
-                <option value="Europe/Berlin">Berlin</option>
-                <option value="Asia/Tokyo">Tokyo</option>
-                <option value="Asia/Shanghai">Shanghai</option>
-                <option value="Asia/Hong_Kong">Hong Kong</option>
-                <option value="Asia/Singapore">Singapore</option>
-              </select>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <SaveIndicator status={status} onRetry={retry} />
-    </ConfigSection>
-  )
-}
-
-// ==================== Heartbeat: Prompt Editor ====================
-
-function PromptEditor() {
-  const [content, setContent] = useState('')
-  const [filePath, setFilePath] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [dirty, setDirty] = useState(false)
-
-  useEffect(() => {
-    api.heartbeat.getPromptFile()
-      .then(({ content, path }) => {
-        setContent(content)
-        setFilePath(path)
-      })
-      .catch(() => setError('Failed to load prompt file'))
-      .finally(() => setLoading(false))
-  }, [])
-
-  const handleSave = async () => {
-    setSaving(true)
-    setError(null)
-    setSaved(false)
-    try {
-      await api.heartbeat.updatePromptFile(content)
-      setDirty(false)
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    } catch {
-      setError('Failed to save')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <ConfigSection title="Prompt File" description={filePath || 'The prompt template used for each heartbeat cycle.'}>
-      {loading ? (
-        <div className="text-sm text-text-muted">Loading...</div>
-      ) : (
-        <>
-          <textarea
-            className={`${inputClass} min-h-[200px] max-h-[400px] resize-y font-mono text-xs leading-relaxed`}
-            value={content}
-            onChange={(e) => { setContent(e.target.value); setDirty(true) }}
-          />
-          <div className="flex items-center gap-2 mt-2">
-            <button
-              onClick={handleSave}
-              disabled={saving || !dirty}
-              className="btn-primary-sm"
-            >
-              {saving ? 'Saving...' : 'Save'}
-            </button>
-            {saved && (
-              <span className="inline-flex items-center gap-1.5 text-[11px]">
-                <span className="w-1.5 h-1.5 rounded-full bg-green" />
-                <span className="text-text-muted">Saved</span>
-              </span>
-            )}
-            {error && (
-              <span className="inline-flex items-center gap-1.5 text-[11px]">
-                <span className="w-1.5 h-1.5 rounded-full bg-red" />
-                <span className="text-red">{error}</span>
-              </span>
-            )}
-            {dirty && !saved && !error && (
-              <span className="text-[11px] text-text-muted">Unsaved changes</span>
-            )}
-          </div>
-        </>
-      )}
-    </ConfigSection>
-  )
-}
-
-// ==================== Heartbeat Tab ====================
-
-function HeartbeatSection() {
-  const [config, setConfig] = useState<AppConfig | null>(null)
-
-  useEffect(() => {
-    api.config.load().then(setConfig).catch(console.warn)
-  }, [])
-
-  return (
-    <div className="flex-1 overflow-y-auto">
-      <div className="max-w-[880px] mx-auto space-y-6">
-        <div className="rounded-lg border border-border/50 bg-bg-secondary/50 px-4 py-3">
-          <p className="text-[13px] text-text-muted leading-relaxed">
-            Heartbeat is a periodic self-check that runs as an internal cron job on the event bus.
-            When fired, Adrian reviews current state and decides whether to notify you.
-            Configure the interval, active hours, and prompt below.
-          </p>
-        </div>
-        <StatusBar />
-        {config && <HeartbeatConfigForm config={config} />}
-        <PromptEditor />
-      </div>
-    </div>
-  )
 }
 
 // ==================== Cron Section ====================
@@ -353,7 +95,6 @@ function CronSection() {
   }
 
   const handleDelete = async (job: CronJob) => {
-    if (job.name === '__heartbeat__') return
     try {
       await api.cron.remove(job.id)
       await loadJobs()
@@ -370,9 +111,10 @@ function CronSection() {
     <div className="flex flex-col gap-3">
       <div className="rounded-lg border border-border/50 bg-bg-secondary/50 px-4 py-3">
         <p className="text-[13px] text-text-muted leading-relaxed">
-          Cron jobs fire events on the dispatch bus at scheduled intervals.
-          Each job's payload is sent to Adrian as a prompt — use them for periodic checks, reports, or any recurring task.
-          Internal jobs (heartbeat, snapshot) are managed by their own tabs.
+          On schedule, a cron job runs its payload as a prompt inside the workspace
+          you pick — headless. The workspace agent runs it and reports back via the
+          Inbox; the run shows up live in the Runs tab. Use them for periodic checks,
+          reports, or any recurring task.
         </p>
       </div>
       {error && <div className="text-xs text-red">{error}</div>}
@@ -419,7 +161,6 @@ function CronJobCard({ job, onToggle, onRunNow, onDelete }: {
   onDelete: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
-  const isHeartbeat = job.name === '__heartbeat__'
 
   return (
     <div className={`rounded-lg border ${job.enabled ? 'border-border' : 'border-border/50 opacity-60'} bg-bg`}>
@@ -430,9 +171,7 @@ function CronJobCard({ job, onToggle, onRunNow, onDelete }: {
         {/* Info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`text-sm font-medium ${isHeartbeat ? 'text-purple' : 'text-text'}`}>
-              {isHeartbeat ? '💓 heartbeat' : job.name}
-            </span>
+            <span className="text-sm font-medium text-text">{job.name}</span>
             <span className="text-xs text-text-muted">{job.id}</span>
             {job.state.lastStatus === 'error' && (
               <span className="text-xs text-red">
@@ -464,26 +203,34 @@ function CronJobCard({ job, onToggle, onRunNow, onDelete }: {
           >
             {expanded ? '▾' : '▸'}
           </button>
-          {!isHeartbeat && (
-            <button
-              onClick={onDelete}
-              title="Delete"
-              className="p-1.5 rounded text-text-muted hover:text-red hover:bg-bg-tertiary transition-colors text-xs"
-            >
-              ✕
-            </button>
-          )}
+          <button
+            onClick={onDelete}
+            title="Delete"
+            className="p-1.5 rounded text-text-muted hover:text-red hover:bg-bg-tertiary transition-colors text-xs"
+          >
+            ✕
+          </button>
         </div>
       </div>
 
       {expanded && (
         <div className="border-t border-border/50 px-4 py-3 text-xs space-y-2">
           <div>
+            <span className="text-text-muted">Runs in: </span>
+            {job.workspaceId ? (
+              <span className="text-text font-mono">
+                {job.workspaceId}{job.agent ? ` · ${job.agent}` : ' · default agent'}
+              </span>
+            ) : (
+              <span className="text-red">no workspace — won't run (assign one)</span>
+            )}
+          </div>
+          <div>
             <span className="text-text-muted">Payload: </span>
             <pre className="inline text-text whitespace-pre-wrap break-all">{job.payload}</pre>
           </div>
           <div className="flex gap-4 text-text-muted">
-            <span>Last run: {job.state.lastRunAtMs ? `${timeAgo(job.state.lastRunAtMs)} (${formatDateTime(job.state.lastRunAtMs)})` : 'never'}</span>
+            <span>Last run: {job.state.lastRunAtMs ? `${formatRelativeTime(job.state.lastRunAtMs)} (${formatDateTime(job.state.lastRunAtMs)})` : 'never'}</span>
             <span>Status: {job.state.lastStatus ?? 'n/a'}</span>
             <span>Created: {formatDateTime(job.createdAt)}</span>
           </div>
@@ -498,13 +245,27 @@ function AddCronJobForm({ onClose, onCreated }: { onClose: () => void; onCreated
   const [payload, setPayload] = useState('')
   const [schedKind, setSchedKind] = useState<'every' | 'cron' | 'at'>('every')
   const [schedValue, setSchedValue] = useState('1h')
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [workspaceId, setWorkspaceId] = useState('')
+  const [agent, setAgent] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    void listWorkspaces().then(setWorkspaces).catch(() => setWorkspaces([]))
+  }, [])
+
+  // Agent options follow the picked workspace's enabled adapters.
+  const agentOptions = workspaces.find((w) => w.id === workspaceId)?.agents ?? []
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim() || !payload.trim()) {
       setError('Name and payload are required')
+      return
+    }
+    if (!workspaceId) {
+      setError('Pick the workspace this job runs in')
       return
     }
 
@@ -516,7 +277,13 @@ function AddCronJobForm({ onClose, onCreated }: { onClose: () => void; onCreated
     setSaving(true)
     setError('')
     try {
-      await api.cron.add({ name: name.trim(), payload: payload.trim(), schedule })
+      await api.cron.add({
+        name: name.trim(),
+        payload: payload.trim(),
+        schedule,
+        workspaceId,
+        ...(agent ? { agent } : {}),
+      })
       onCreated()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Create failed')
@@ -539,6 +306,33 @@ function AddCronJobForm({ onClose, onCreated }: { onClose: () => void; onCreated
         onChange={(e) => setName(e.target.value)}
         className="w-full bg-bg-tertiary border border-border rounded-md px-3 py-2 text-sm text-text outline-none focus:border-accent"
       />
+
+      {/* Where the job runs — a workspace + one of its enabled agents, headless. */}
+      <div className="flex gap-2">
+        <select
+          value={workspaceId}
+          onChange={(e) => { setWorkspaceId(e.target.value); setAgent('') }}
+          className="flex-1 bg-bg-tertiary border border-border rounded-md px-2 py-2 text-sm text-text outline-none focus:border-accent"
+        >
+          <option value="">
+            {workspaces.length === 0 ? '— no workspaces —' : '— run in workspace… —'}
+          </option>
+          {workspaces.map((w) => (
+            <option key={w.id} value={w.id}>{w.tag}</option>
+          ))}
+        </select>
+        <select
+          value={agent}
+          onChange={(e) => setAgent(e.target.value)}
+          disabled={!workspaceId}
+          className="bg-bg-tertiary border border-border rounded-md px-2 py-2 text-sm text-text outline-none focus:border-accent disabled:opacity-40"
+        >
+          <option value="">{workspaceId ? 'default agent' : 'agent'}</option>
+          {agentOptions.map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </select>
+      </div>
 
       <textarea
         placeholder="Payload / instruction text"
@@ -598,54 +392,34 @@ function AddCronJobForm({ onClose, onCreated }: { onClose: () => void; onCreated
 
 // ==================== Page ====================
 
-type Tab = 'flow' | 'heartbeat' | 'cron' | 'webhook'
+interface AutomationPageProps {
+  spec: Extract<ViewSpec, { kind: 'automation' }>
+}
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'flow', label: 'Flow' },
-  { key: 'heartbeat', label: 'Heartbeat' },
-  { key: 'cron', label: 'Cron Jobs' },
-  { key: 'webhook', label: 'Webhook' },
-]
-
-export function AutomationPage() {
-  const [tab, setTab] = useState<Tab>('flow')
+/**
+ * Automation page is sub-section-driven — `spec.params.section` picks which
+ * surface renders. The Automation sidebar holds one row per section so each
+ * section is its own tab in the editor area.
+ */
+export function AutomationPage({ spec }: AutomationPageProps) {
+  const section = spec.params.section
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <PageHeader
-        title="Automation"
-        description="Automated tasks — heartbeat, cron jobs, and scheduled actions."
+        title={SECTION_TITLE[section]}
+        description={SECTION_DESCRIPTION[section]}
       />
-
-      <div className="px-4 md:px-6 border-b border-border/60">
-        <div className="flex gap-1">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`px-3 py-2 text-sm font-medium transition-colors relative ${
-                tab === t.key ? 'text-accent' : 'text-text-muted hover:text-text'
-              }`}
-            >
-              {t.label}
-              {tab === t.key && (
-                <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-accent rounded-t" />
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
-
       <div className="flex-1 flex flex-col min-h-0 px-4 md:px-6 py-5">
         <div className="flex-1 min-h-0">
-          {tab === 'flow' ? (
+          {section === 'flow' ? (
             <AutomationFlowSection />
-          ) : tab === 'heartbeat' ? (
-            <HeartbeatSection />
-          ) : tab === 'cron' ? (
+          ) : section === 'cron' ? (
             <CronSection />
-          ) : (
+          ) : section === 'webhook' ? (
             <AutomationWebhookSection />
+          ) : (
+            <AutomationRunsSection />
           )}
         </div>
       </div>

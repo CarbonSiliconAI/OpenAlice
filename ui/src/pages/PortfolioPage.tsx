@@ -2,11 +2,15 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { api, type Position, type WalletCommitLog, type EquityCurvePoint, type UTASnapshotSummary } from '../api'
 import { useAutoSave } from '../hooks/useAutoSave'
 import { useAccountHealth } from '../hooks/useAccountHealth'
+import { useWorkspace } from '../tabs/store'
 import { PageHeader } from '../components/PageHeader'
 import { EmptyState } from '../components/StateViews'
 import { EquityCurve } from '../components/EquityCurve'
 import { SnapshotDetail } from '../components/SnapshotDetail'
 import { Toggle } from '../components/Toggle'
+import { Metric, signFromDelta } from '../components/Metric'
+import { Sparkline } from '../components/Sparkline'
+import { fmt, fmtPnl, fmtNum, fmtPctSigned } from '../lib/format'
 
 // ==================== Types ====================
 
@@ -43,6 +47,60 @@ interface PortfolioData {
 
 const EMPTY: PortfolioData = { equity: null, accounts: [], fxRates: [] }
 
+const CUTOFF_24H_MS = 24 * 60 * 60 * 1000
+
+interface CurveSummary {
+  total: { values: number[]; firstAtCutoff: number | null; latest: number | null }
+  perAccount: Record<string, { values: number[]; firstAtCutoff: number | null; latest: number | null }>
+}
+
+/** Trailing-24h baseline + sparkline values, both at the aggregate level
+ *  and per-account. Drives the today-PnL delta in the hero plus the
+ *  per-account mini sparklines in AccountStrip. */
+function summarizeAggregateCurve(points: EquityCurvePoint[]): CurveSummary {
+  const sorted = [...points].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+  const cutoff = Date.now() - CUTOFF_24H_MS
+
+  const totalValues: number[] = []
+  let totalFirstAtCutoff: number | null = null
+  let totalLatest: number | null = null
+  const perAccountValues = new Map<string, number[]>()
+  const perAccountFirst = new Map<string, number>()
+  const perAccountLatest = new Map<string, number>()
+
+  for (const p of sorted) {
+    const t = new Date(p.timestamp).getTime()
+    const totalN = Number(p.equity)
+    if (Number.isFinite(totalN)) {
+      totalValues.push(totalN)
+      totalLatest = totalN
+      if (t >= cutoff && totalFirstAtCutoff == null) totalFirstAtCutoff = totalN
+    }
+    for (const [id, raw] of Object.entries(p.accounts ?? {})) {
+      const n = Number(raw)
+      if (!Number.isFinite(n)) continue
+      let arr = perAccountValues.get(id)
+      if (!arr) { arr = []; perAccountValues.set(id, arr) }
+      arr.push(n)
+      perAccountLatest.set(id, n)
+      if (t >= cutoff && !perAccountFirst.has(id)) perAccountFirst.set(id, n)
+    }
+  }
+
+  const perAccount: CurveSummary['perAccount'] = {}
+  for (const [id, values] of perAccountValues) {
+    perAccount[id] = {
+      values,
+      firstAtCutoff: perAccountFirst.get(id) ?? null,
+      latest: perAccountLatest.get(id) ?? null,
+    }
+  }
+  return {
+    total: { values: totalValues, firstAtCutoff: totalFirstAtCutoff, latest: totalLatest },
+    perAccount,
+  }
+}
+
 // ==================== Page ====================
 
 export function PortfolioPage() {
@@ -56,6 +114,10 @@ export function PortfolioPage() {
   const [selectedSnapshot, setSelectedSnapshot] = useState<UTASnapshotSummary | null>(null)
   const [snapshotEnabled, setSnapshotEnabled] = useState(true)
   const [snapshotEvery, setSnapshotEvery] = useState('15m')
+  // Aggregate curve (all UTAs, full per-account breakdown) — shared between
+  // hero today-PnL delta and per-account sparklines. Distinct from
+  // curvePoints which follows the user's chart-account selection.
+  const [aggregateCurve, setAggregateCurve] = useState<CurveSummary | null>(null)
 
   const snapshotConfig = useMemo(() => ({ enabled: snapshotEnabled, every: snapshotEvery }), [snapshotEnabled, snapshotEvery])
   const saveSnapshotConfig = useCallback(async (d: Record<string, unknown>) => {
@@ -63,7 +125,10 @@ export function PortfolioPage() {
   }, [])
   const { status: snapshotSaveStatus } = useAutoSave({ data: snapshotConfig, save: saveSnapshotConfig })
 
-  // Fetch curve data for a specific account or all
+  // Fetch curve data for the user's chart-pane selection (single account
+  // or 'all'). Distinct from aggregate-curve — that one is always fetched
+  // 'all' so per-account derivations stay consistent regardless of the
+  // chart pane state.
   const fetchCurveData = useCallback(async (accountId: string | 'all') => {
     if (accountId === 'all') {
       const result = await api.trading.equityCurve({ limit: 200 }).catch(() => ({ points: [] }))
@@ -82,11 +147,13 @@ export function PortfolioPage() {
 
   const refresh = useCallback(async () => {
     setLoading(true)
-    const [result, configResult] = await Promise.all([
+    const [result, configResult, aggregateResult] = await Promise.all([
       fetchPortfolioData(),
       api.config.load().catch(() => null),
+      api.trading.equityCurve({ limit: 1500 }).catch(() => ({ points: [] as EquityCurvePoint[] })),
     ])
     setData(result)
+    setAggregateCurve(summarizeAggregateCurve(aggregateResult.points))
     if (configResult?.snapshot) {
       setSnapshotEnabled(configResult.snapshot.enabled)
       setSnapshotEvery(configResult.snapshot.every)
@@ -152,12 +219,13 @@ export function PortfolioPage() {
     <div className="flex flex-col flex-1 min-h-0">
       <PageHeader
         title="Portfolio"
-        description={<>Live portfolio overview across all trading accounts.{lastRefresh && <span className="ml-2 text-text-muted/50">Updated {lastRefresh.toLocaleTimeString()}</span>}</>}
+        description="Live portfolio overview across all trading accounts."
+        live={{ lastUpdated: lastRefresh }}
         right={
           <button
             onClick={refresh}
             disabled={loading}
-            className="px-3 py-1.5 text-[13px] font-medium rounded-md border border-border hover:bg-bg-tertiary disabled:opacity-50 transition-colors"
+            className="btn-secondary-sm"
           >
             {loading ? 'Loading...' : 'Refresh'}
           </button>
@@ -169,7 +237,7 @@ export function PortfolioPage() {
         <div className="flex gap-6 items-start">
           {/* Main column */}
           <div className="flex-1 min-w-0 space-y-5">
-            <HeroMetrics equity={data.equity} />
+            <HeroMetrics equity={data.equity} curve={aggregateCurve?.total ?? null} />
 
             {curvePoints.length > 0 && (
               <EquityCurve
@@ -198,7 +266,10 @@ export function PortfolioPage() {
             )}
 
             {accountSources.length > 0 && (
-              <AccountStrip sources={accountSources} />
+              <AccountStrip
+                sources={accountSources}
+                perAccountCurve={aggregateCurve?.perAccount ?? {}}
+              />
             )}
 
             {allPositions.length > 0 && (
@@ -207,7 +278,7 @@ export function PortfolioPage() {
 
             {/* Empty states */}
             {data.accounts.length === 0 && !loading && (
-              <EmptyState title="No trading accounts connected." description="Configure connections in the Trading page." />
+              <NoAccountsEmpty />
             )}
             {data.accounts.length > 0 && allPositions.length === 0 && !loading && (
               <EmptyState title="No open positions." />
@@ -234,21 +305,21 @@ export function PortfolioPage() {
 
 async function fetchPortfolioData(): Promise<PortfolioData> {
   try {
-    const [equityResult, accountsResult, fxResult] = await Promise.allSettled([
+    const [equityResult, utasResult, fxResult] = await Promise.allSettled([
       api.trading.equity(),
-      api.trading.listAccounts(),
+      api.trading.listUTAs(),
       api.trading.fxRates(),
     ])
 
     const equity = equityResult.status === 'fulfilled' ? equityResult.value : null
-    const accountsList = accountsResult.status === 'fulfilled' ? accountsResult.value.accounts : []
+    const utasList = utasResult.status === 'fulfilled' ? utasResult.value.utas : []
     const fxRates = fxResult.status === 'fulfilled' ? fxResult.value.rates : []
 
     const accounts = await Promise.all(
-      accountsList.map(async (acct): Promise<AccountData> => {
+      utasList.map(async (acct): Promise<AccountData> => {
         try {
           const [posResp, logResp] = await Promise.all([
-            api.trading.positions(acct.id),
+            api.trading.utaPositions(acct.id),
             api.trading.walletLog(acct.id, 10),
           ])
           return { ...acct, positions: posResp.positions, walletLog: logResp.commits }
@@ -264,9 +335,37 @@ async function fetchPortfolioData(): Promise<PortfolioData> {
   }
 }
 
+// ==================== Empty: no trading accounts ====================
+
+function NoAccountsEmpty() {
+  const openOrFocus = useWorkspace((s) => s.openOrFocus)
+  const setSidebar = useWorkspace((s) => s.setSidebar)
+  const goToTradingSettings = () => {
+    setSidebar('settings')
+    openOrFocus({ kind: 'settings', params: { category: 'trading' } })
+  }
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <p className="text-sm font-medium text-text-muted">No trading accounts connected.</p>
+      <p className="text-[12px] text-text-muted/60 mt-1.5 max-w-[320px]">
+        Portfolio shows live equity, positions and PnL across all your brokers. Add a connection to get started.
+      </p>
+      <button
+        onClick={goToTradingSettings}
+        className="mt-4 btn-primary text-[12px]"
+      >
+        Add broker in Settings → Trading
+      </button>
+    </div>
+  )
+}
+
 // ==================== Hero Metrics ====================
 
-function HeroMetrics({ equity }: { equity: AggregatedEquity | null }) {
+function HeroMetrics({ equity, curve }: {
+  equity: AggregatedEquity | null
+  curve: { values: number[]; firstAtCutoff: number | null; latest: number | null } | null
+}) {
   if (!equity) {
     return (
       <div className="border border-border rounded-lg bg-bg-secondary p-5 text-center">
@@ -275,24 +374,46 @@ function HeroMetrics({ equity }: { equity: AggregatedEquity | null }) {
     )
   }
 
-  return (
-    <div className="border border-border rounded-lg bg-bg-secondary p-5">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <HeroItem label="Total Equity" value={fmt(Number(equity.totalEquity))} />
-        <HeroItem label="Cash" value={fmt(Number(equity.totalCash))} />
-        <HeroItem label="Unrealized PnL" value={fmtPnl(Number(equity.totalUnrealizedPnL))} pnl={Number(equity.totalUnrealizedPnL)} />
-        <HeroItem label="Realized PnL" value={fmtPnl(Number(equity.totalRealizedPnL))} pnl={Number(equity.totalRealizedPnL)} />
-      </div>
-    </div>
-  )
-}
+  const total = Number(equity.totalEquity)
+  const cash = Number(equity.totalCash)
+  const unrealized = Number(equity.totalUnrealizedPnL)
+  const realized = Number(equity.totalRealizedPnL)
 
-function HeroItem({ label, value, pnl }: { label: string; value: string; pnl?: number }) {
-  const color = pnl == null ? 'text-text' : pnl >= 0 ? 'text-green' : 'text-red'
+  // Today PnL — same shape as TradingPage hero. Suppress when no baseline
+  // is available yet (fresh portfolio with no 24h history).
+  let todayDelta: { value: string; sign: 'up' | 'down' | 'flat' } | undefined
+  if (curve && curve.latest != null && curve.firstAtCutoff != null) {
+    const delta = curve.latest - curve.firstAtCutoff
+    const pct = curve.firstAtCutoff !== 0 ? (delta / curve.firstAtCutoff) * 100 : 0
+    todayDelta = {
+      value: `${fmtPnl(delta, 'USD')} (${fmtPctSigned(pct)}) today`,
+      sign: signFromDelta(delta),
+    }
+  }
+
   return (
-    <div>
-      <p className="text-[11px] text-text-muted uppercase tracking-wide">{label}</p>
-      <p className={`text-[22px] md:text-[28px] font-bold tabular-nums ${color}`}>{value}</p>
+    <div className="border border-border rounded-lg bg-bg-secondary px-5 py-5 space-y-4">
+      <Metric
+        size="lg"
+        label="Total Equity · USD"
+        value={fmt(total, 'USD')}
+        delta={todayDelta ?? { value: '— today', sign: 'flat' }}
+      />
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 pt-4 border-t border-border">
+        <Metric size="sm" label="Cash" value={fmt(cash, 'USD')} />
+        <Metric
+          size="sm"
+          label="Unrealized PnL"
+          value={fmtPnl(unrealized, 'USD')}
+          valueSign={signFromDelta(unrealized)}
+        />
+        <Metric
+          size="sm"
+          label="Realized PnL"
+          value={fmtPnl(realized, 'USD')}
+          valueSign={signFromDelta(realized)}
+        />
+      </div>
     </div>
   )
 }
@@ -305,33 +426,64 @@ const HEALTH_DOT: Record<string, string> = {
   offline: 'bg-red',
 }
 
-function AccountStrip({ sources }: { sources: Array<{ id: string; label: string; provider: string; equity: string; unrealizedPnL: number; error?: string; health?: string; disabled?: boolean }> }) {
+function AccountStrip({ sources, perAccountCurve }: {
+  sources: Array<{ id: string; label: string; provider: string; equity: string; unrealizedPnL: number; error?: string; health?: string; disabled?: boolean }>
+  perAccountCurve: Record<string, { values: number[]; firstAtCutoff: number | null; latest: number | null }>
+}) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
       {sources.map(s => {
         const isDisabled = s.disabled
         const isOffline = s.health === 'offline' && !isDisabled
         const dotColor = isDisabled
           ? 'bg-text-muted/40'
           : (HEALTH_DOT[s.health ?? 'healthy'] ?? 'bg-text-muted')
+
+        const curve = perAccountCurve[s.id]
+        const todayDelta = curve && curve.latest != null && curve.firstAtCutoff != null
+          ? curve.latest - curve.firstAtCutoff
+          : null
+        const showSpark = !isDisabled && !isOffline && curve && curve.values.length >= 2
+
         return (
-          <div key={s.id} className={`flex items-center gap-2 px-3 py-1.5 rounded-md border border-border bg-bg-secondary text-[12px] ${isOffline || isDisabled ? 'opacity-60' : ''}`}>
-            <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
-            <span className="text-text font-medium">{s.label}</span>
-            {isDisabled
-              ? <span className="text-text-muted text-[11px]">Disabled</span>
-              : isOffline
-                ? <span className="text-red text-[11px]">Reconnecting...</span>
-                : <>
-                    <span className="text-text-muted">{fmt(Number(s.equity))}</span>
-                    {s.unrealizedPnL !== 0 && (
-                      <span className={s.unrealizedPnL >= 0 ? 'text-green' : 'text-red'}>
-                        {fmtPnl(s.unrealizedPnL)}
+          <div key={s.id} className={`flex items-center gap-3 px-3.5 py-3 rounded-lg border border-border bg-bg-secondary ${isOffline || isDisabled ? 'opacity-60' : ''}`}>
+            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-text font-medium text-[13px] truncate">{s.label}</span>
+                {!isDisabled && !isOffline && (
+                  <span className="text-text-muted tabular-nums text-[13px]">{fmt(Number(s.equity))}</span>
+                )}
+              </div>
+              <div className="flex items-baseline justify-between gap-2 mt-0.5">
+                {isDisabled
+                  ? <span className="text-text-muted text-[11px]">Disabled</span>
+                  : isOffline
+                    ? <span className="text-red text-[11px]">Reconnecting…</span>
+                    : (
+                      <span className="text-[11px] tabular-nums">
+                        {todayDelta != null && Number.isFinite(todayDelta) ? (
+                          <span className={todayDelta >= 0 ? 'text-green' : 'text-red'}>
+                            {todayDelta >= 0 ? '▲' : '▼'} {fmtPnl(todayDelta)} today
+                          </span>
+                        ) : s.unrealizedPnL !== 0 ? (
+                          <span className={s.unrealizedPnL >= 0 ? 'text-green' : 'text-red'}>
+                            {fmtPnl(s.unrealizedPnL)} unrealized
+                          </span>
+                        ) : (
+                          <span className="text-text-muted/60">—</span>
+                        )}
                       </span>
-                    )}
-                  </>
-            }
-            {s.error && !isOffline && !isDisabled && <span className="text-text-muted/50">{s.error}</span>}
+                    )
+                }
+                {s.error && !isOffline && !isDisabled && <span className="text-text-muted/50 text-[11px]">{s.error}</span>}
+              </div>
+            </div>
+            {showSpark && (
+              <div className="hidden md:block shrink-0">
+                <Sparkline values={curve!.values} width={88} height={36} color="auto" />
+              </div>
+            )}
           </div>
         )
       })}
@@ -346,34 +498,34 @@ interface PositionWithAccount extends Position {
   accountProvider: string
 }
 
-/** True when the position carries derivative-specific context worth showing. */
-function isDerivative(p: Position): boolean {
-  const t = p.contract.secType
-  if (t === 'FUT' || t === 'OPT' || t === 'FOP') return true
-  return p.side === 'short'
-}
-
-/** Build display fragments for a contract based on its secType. */
-function contractDisplay(p: Position): { name: string; tag?: string } {
+/**
+ * Build display fragments for a contract.
+ *
+ * The `tag` is the canonical SecType string (STK / CRYPTO / CRYPTO_PERP /
+ * OPT / FUT / ...) — no vernacular translation. UI mirrors the taxonomy
+ * directly so a `[CRYPTO_PERP]` pill is unambiguously the same thing as
+ * `Position.contract.secType === 'CRYPTO_PERP'` everywhere else in the
+ * stack.
+ *
+ * `name` defaults to the symbol; for OPT/FOP we build a longer descriptor
+ * (expiry/right/strike) so two option positions on the same underlying
+ * are distinguishable in the table.
+ */
+function contractDisplay(p: Position): { name: string; tag: string } {
   const c = p.contract
   const sym = c.symbol ?? '???'
-  const t = c.secType
+  const t = c.secType || 'UNK'
 
   if (t === 'OPT' || t === 'FOP') {
-    // Options: show localSymbol if available, else construct from parts
     const optDesc = c.localSymbol
       ?? [sym, c.lastTradeDateOrContractMonth, c.right, c.strike && fmt(c.strike)].filter(Boolean).join(' ')
-    return { name: optDesc, tag: 'opt' }
+    return { name: optDesc, tag: t }
   }
   if (t === 'FUT') {
     const expiry = c.lastTradeDateOrContractMonth
-    return { name: expiry ? `${sym} ${expiry}` : sym, tag: 'fut' }
+    return { name: expiry ? `${sym} ${expiry}` : sym, tag: t }
   }
-  if (t === 'CRYPTO') {
-    return { name: sym, tag: 'spot' }
-  }
-  // STK, CASH, BOND, CMDTY, etc. — just the symbol, no tag
-  return { name: sym }
+  return { name: sym, tag: t }
 }
 
 function PositionsTable({ positions, fxRates }: { positions: PositionWithAccount[]; fxRates: FxRateInfo[] }) {
@@ -403,25 +555,21 @@ function PositionsTable({ positions, fxRates }: { positions: PositionWithAccount
           <tbody>
             {positions.map((p, i) => {
               const display = contractDisplay(p)
-              const deriv = isDerivative(p)
               const ccy = p.currency ?? 'USD'
               const fxRate = ccy === 'USD' ? 1 : (rateMap[ccy] ?? 1)
               const usdValue = Number(p.marketValue) * fxRate
+              const isShort = p.side === 'short'
 
               return (
                 <tr key={i} className="border-t border-border hover:bg-bg-tertiary/30 transition-colors">
                   <td className="px-3 py-2">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-medium text-text">{display.name}</span>
-                      {display.tag && (
-                        <span className="text-[10px] px-1 py-0.5 rounded bg-bg-tertiary text-text-muted">{display.tag}</span>
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-bg-tertiary text-text-muted font-mono tracking-tight">{display.tag}</span>
+                      {isShort && (
+                        <span className="text-[10px] px-1 py-0.5 rounded font-medium bg-red/15 text-red">SHORT</span>
                       )}
-                      {deriv && (
-                        <span className={`text-[10px] px-1 py-0.5 rounded font-medium ${p.side === 'long' ? 'bg-green/15 text-green' : 'bg-red/15 text-red'}`}>
-                          {p.side}
-                        </span>
-                      )}
-                      <span className="text-[10px] text-text-muted/50">{p.accountLabel}</span>
+                      <span className="text-[10px] text-text-muted/70">{p.accountLabel}</span>
                     </div>
                   </td>
                   <td className="px-3 py-2 text-center text-text-muted text-[11px]">{ccy}</td>
@@ -441,7 +589,7 @@ function PositionsTable({ positions, fxRates }: { positions: PositionWithAccount
                     {(() => {
                       const cost = Number(p.avgCost) * Number(p.quantity)
                       const pct = cost > 0 ? (Number(p.unrealizedPnL) / cost) * 100 : 0
-                      return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`
+                      return fmtPctSigned(pct)
                     })()}
                   </td>
                 </tr>
@@ -546,8 +694,6 @@ function TradeLog({ commits }: { commits: CommitWithAccount[] }) {
   )
 }
 
-// ==================== Formatting Helpers ====================
-
 // ==================== Snapshot Settings ====================
 
 const INTERVAL_PRESETS = [
@@ -609,33 +755,4 @@ function SnapshotSettings({ enabled, every, onEnabledChange, onEveryChange, save
       {saveStatus === 'error' && <span className="text-red text-[10px]">save failed</span>}
     </div>
   )
-}
-
-// ==================== Formatting Helpers ====================
-
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  USD: '$', HKD: 'HK$', EUR: '€', GBP: '£', JPY: '¥',
-  CNY: '¥', CNH: '¥', CAD: 'C$', AUD: 'A$', CHF: 'CHF ',
-  SGD: 'S$', KRW: '₩', INR: '₹', TWD: 'NT$', BRL: 'R$',
-}
-
-function currencySymbol(currency?: string): string {
-  if (!currency) return '$'
-  return CURRENCY_SYMBOLS[currency.toUpperCase()] ?? `${currency} `
-}
-
-function fmt(n: number, currency?: string): string {
-  const sym = currencySymbol(currency)
-  return n >= 1000 ? `${sym}${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    : `${sym}${n.toFixed(2)}`
-}
-
-function fmtPnl(n: number, currency?: string): string {
-  const sign = n >= 0 ? '+' : ''
-  return `${sign}${fmt(n, currency)}`
-}
-
-function fmtNum(n: number): string {
-  return n >= 1 ? n.toLocaleString('en-US', { maximumFractionDigits: 4 })
-    : n.toPrecision(4)
 }

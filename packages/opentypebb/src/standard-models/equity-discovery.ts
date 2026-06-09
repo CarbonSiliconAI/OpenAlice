@@ -22,6 +22,13 @@ export const EquityDiscoveryDataSchema = z.object({
   change: z.number().nullable().default(null).describe('Change in price.'),
   percent_change: z.number().nullable().default(null).describe('Percent change in price.'),
   volume: z.number().nullable().default(null).describe('Trading volume.'),
+  // Right-side volume context — populated by providers that carry it (yfinance
+  // screeners); null elsewhere. relative_volume = volume / 3-month average, the
+  // cross-ticker-comparable read of whether a name is trading unusually.
+  avg_volume: z.number().nullable().default(null).describe('Average daily trading volume over the trailing 3 months.'),
+  relative_volume: z.number().nullable().default(null).describe("Today's volume divided by the 3-month average. >1 means heavier than usual (relative, intra-ticker read)."),
+  turnover: z.number().nullable().default(null).describe("Today's volume divided by shares outstanding (share turnover)."),
+  dollar_volume: z.number().nullable().default(null).describe("Price × volume — traded notional. The cross-ticker-comparable absolute read; aggregates to a sector."),
 }).passthrough()
 
 export type EquityDiscoveryData = z.infer<typeof EquityDiscoveryDataSchema>

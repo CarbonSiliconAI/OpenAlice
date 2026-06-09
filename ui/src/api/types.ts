@@ -1,3 +1,22 @@
+// ==================== Version / Update awareness ====================
+
+export interface VersionInfo {
+  /** App version from package.json. */
+  current: string
+  /** Latest release tag from GitHub, or null if fetch failed / no releases. */
+  latest: string | null
+  /** True when latest > current (semver). */
+  hasUpdate: boolean
+  /** GitHub release page URL — UI links to this for changelog. */
+  releaseUrl: string | null
+  /** Markdown release body. */
+  releaseNotes: string | null
+  /** ISO timestamp when the release was published. */
+  publishedAt: string | null
+  /** Non-null when fetch failed (rate limit, network, etc.). */
+  error: string | null
+}
+
 // ==================== AI Provider Profiles ====================
 
 export type AIBackend = 'agent-sdk' | 'codex' | 'vercel-ai-sdk'
@@ -10,9 +29,53 @@ export interface Profile {
   provider?: string   // vercel-ai-sdk only
   baseUrl?: string
   apiKey?: string
+  /** Pointer into the credentials map. Set eagerly by writeProfile. */
+  credentialSlug?: string
+}
+
+// ==================== AI Provider Credentials ====================
+
+export type CredentialVendor =
+  | 'anthropic' | 'openai' | 'google'
+  | 'minimax' | 'glm' | 'kimi' | 'deepseek'
+  | 'custom'
+
+export type CredentialAuthType = 'api-key' | 'subscription'
+
+export interface Credential {
+  vendor: CredentialVendor
+  authType: CredentialAuthType
+  apiKey?: string
+  baseUrl?: string
+}
+
+// ==================== SDK Adapters ====================
+
+export type SdkAdapterId =
+  | 'agent-sdk' | 'codex'
+  | 'vercel-anthropic' | 'vercel-openai' | 'vercel-google'
+
+export interface SdkAdapterInfo {
+  id: SdkAdapterId
+  label: string
+  description: string
+  presets: Array<{
+    presetId: string
+    presetLabel: string
+    isTestDefault: boolean
+  }>
 }
 
 // ==================== AI Provider Presets ====================
+
+export type WireShape = 'anthropic' | 'openai-chat' | 'openai-responses'
+
+/** A region + the per-wire-shape endpoints it offers. */
+export interface SerializedRegion {
+  id: string
+  label: string
+  wires: Partial<Record<WireShape, string>>
+}
 
 export interface Preset {
   id: string
@@ -22,6 +85,9 @@ export interface Preset {
   hint?: string
   defaultName: string
   schema: JsonSchema
+  /** Regions × their per-shape endpoints — the form picks a region; the
+   *  credential captures that region's whole wires map (its capabilities). */
+  regions?: SerializedRegion[]
 }
 
 /** Subset of JSON Schema types we use for form rendering. */
@@ -82,8 +148,8 @@ export interface StreamingToolCall {
 }
 
 export type ChatHistoryItem =
-  | { kind: 'text'; role: 'user' | 'assistant'; text: string; timestamp?: string; metadata?: Record<string, unknown>; media?: Array<{ type: string; url: string }> }
-  | { kind: 'tool_calls'; calls: ToolCall[]; timestamp?: string }
+  | { kind: 'text'; role: 'user' | 'assistant'; text: string; timestamp?: string; metadata?: Record<string, unknown>; media?: Array<{ type: string; url: string }>; cursor: string }
+  | { kind: 'tool_calls'; calls: ToolCall[]; timestamp?: string; cursor: string }
 
 // ==================== Config ====================
 
@@ -98,23 +164,28 @@ export interface AppConfig {
   engine: Record<string, unknown>
   agent: { evolutionMode: boolean; claudeCode: Record<string, unknown> }
   compaction: { maxContextTokens: number; maxOutputTokens: number }
-  heartbeat: {
-    enabled: boolean
-    every: string
-    prompt: string
-    activeHours: { start: string; end: string; timezone: string } | null
-  }
   snapshot: {
     enabled: boolean
     every: string
   }
+  mcp: McpConfig
   connectors: ConnectorsConfig
   [key: string]: unknown
 }
 
+/**
+ * MCP server config — lives at top-level of AppConfig (NOT under
+ * connectors:) because the MCP server exports OpenAlice's ToolCenter
+ * to external clients, not because it's a chat-input surface.
+ * `connectors.mcpAsk` is the chat-shaped MCP-as-input flavour and
+ * stays under connectors.
+ */
+export interface McpConfig {
+  port: number
+}
+
 export interface ConnectorsConfig {
   web: { port: number }
-  mcp: { port: number }
   mcpAsk: { enabled: boolean; port?: number }
   telegram: {
     enabled: boolean
@@ -219,6 +290,10 @@ export interface CronJob {
   enabled: boolean
   schedule: CronSchedule
   payload: string
+  /** Target workspace the job's prompt runs in, headless. */
+  workspaceId?: string
+  /** Which enabled CLI agent runs it — claude / codex / pi / opencode. */
+  agent?: string
   state: CronJobState
   createdAt: number
 }
@@ -227,8 +302,16 @@ export interface CronJob {
 
 export type BrokerHealth = 'healthy' | 'degraded' | 'offline'
 
+/** Capability ladder: 'down' < 'connected' (transport + public data) <
+ *  'readable' (private account read). Mirrors the UTA-protocol type. */
+export type UTAReach = 'down' | 'connected' | 'readable'
+/** What an account is for: keyless data source / read-only / writable. */
+export type UTATier = 'data' | 'account' | 'trading'
+
 export interface BrokerHealthInfo {
   status: BrokerHealth
+  reach: UTAReach
+  tier: UTATier
   consecutiveFailures: number
   lastError?: string
   lastSuccessAt?: string
@@ -237,7 +320,7 @@ export interface BrokerHealthInfo {
   disabled: boolean
 }
 
-export interface AccountSummary {
+export interface UTASummary {
   id: string
   label: string
   capabilities: { supportedSecTypes: string[]; supportedOrderTypes: string[] }
@@ -348,27 +431,27 @@ export interface ToolCallRecord {
 
 // ==================== Trading Config ====================
 
-export interface AccountConfig {
+/**
+ * One Unified Trading Account configuration record. The user-facing
+ * concept that wraps a broker connection — distinct from `AccountInfo`,
+ * which is broker-side (cash, equity, margin returned by the broker).
+ */
+export interface UTAConfig {
   id: string
   label?: string
-  type: string
+  /** Broker preset id — resolves to engine + form schema on the backend. */
+  presetId: string
   enabled: boolean
   guards: GuardEntry[]
-  brokerConfig: Record<string, unknown>
+  /** User-filled form values for the preset's schema. */
+  presetConfig: Record<string, unknown>
 }
 
-// ==================== Broker Type Metadata (from /broker-types endpoint) ====================
+// ==================== Broker Preset Metadata (from /broker-presets endpoint) ====================
 
-export interface BrokerConfigField {
-  name: string
-  type: 'text' | 'password' | 'number' | 'boolean' | 'select'
+export interface ModeOption {
+  id: string
   label: string
-  placeholder?: string
-  default?: unknown
-  required?: boolean
-  options?: Array<{ value: string; label: string }>
-  description?: string
-  sensitive?: boolean
 }
 
 export interface SubtitleField {
@@ -378,17 +461,20 @@ export interface SubtitleField {
   prefix?: string
 }
 
-export interface BrokerTypeInfo {
-  type: string
-  name: string
+export interface BrokerPreset {
+  id: string
+  label: string
   description: string
-  /** Multi-line setup guide shown in the New Account wizard. Paragraphs separated by `\n\n`. */
-  setupGuide?: string
+  category: 'recommended' | 'crypto' | 'testing'
+  hint?: string
+  defaultName: string
   badge: string
   badgeColor: string
-  fields: BrokerConfigField[]
-  subtitleFields: SubtitleField[]
+  engine: 'ccxt' | 'alpaca' | 'ibkr' | 'leverup' | 'longbridge' | 'mock'
   guardCategory: 'crypto' | 'securities'
+  modes?: ModeOption[]
+  subtitleFields: SubtitleField[]
+  schema: JsonSchema
 }
 
 export interface GuardEntry {
@@ -399,7 +485,54 @@ export interface GuardEntry {
 export interface TestConnectionResult {
   success: boolean
   error?: string
-  account?: unknown
+  account?: AccountInfo
+  positions?: Position[]
+}
+
+// ==================== Order entry (frontend manual surface) ====================
+//
+// Numeric fields are strings on the wire — the backend uses
+// new Decimal(String(x)) to preserve precision; mirroring the type
+// here keeps frontend → backend aligned and avoids float roundtrip.
+
+export interface PlaceOrderRequest {
+  aliceId: string
+  symbol?: string
+  action: 'BUY' | 'SELL'
+  orderType: string
+  totalQuantity?: string
+  cashQty?: string
+  lmtPrice?: string
+  auxPrice?: string
+  trailStopPrice?: string
+  trailingPercent?: string
+  tif?: string
+  goodTillDate?: string
+  outsideRth?: boolean
+  parentId?: string
+  ocaGroup?: string
+  takeProfit?: { price: string }
+  stopLoss?: { price: string; limitPrice?: string }
+  message: string
+}
+
+export interface ClosePositionRequest {
+  aliceId: string
+  symbol?: string
+  qty?: string
+  message: string
+}
+
+export interface CancelOrderRequest {
+  orderId: string
+  message: string
+}
+
+/** Error response shape from one-shot order endpoints (when status !== 200). */
+export interface OrderErrorResponse {
+  error: string
+  /** Which step blew up — useful for surfacing where the failure happened. */
+  phase?: 'validate' | 'stage' | 'commit' | 'push'
 }
 
 // ==================== Snapshots ====================

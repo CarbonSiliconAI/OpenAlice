@@ -6,10 +6,9 @@ import type { AgentEventMap } from './agent-event.js'
 
 describe('AgentEventSchemas', () => {
   const expectedTypes: (keyof AgentEventMap)[] = [
-    'cron.fire', 'cron.done', 'cron.error',
-    'heartbeat.done', 'heartbeat.skip', 'heartbeat.error',
+    'cron.fire',
     'message.received', 'message.sent',
-    'task.requested', 'task.done', 'task.error',
+    'agent.work.requested', 'agent.work.done', 'agent.work.skip', 'agent.work.error',
   ]
 
   it('should have a schema for every key in AgentEventMap', () => {
@@ -46,53 +45,6 @@ describe('validateEventPayload', () => {
     })).toThrow(/Invalid payload.*cron\.fire/)
   })
 
-  // -- cron.done --
-  it('should accept valid cron.done payload', () => {
-    expect(() => validateEventPayload('cron.done', {
-      jobId: 'abc', jobName: 'test', reply: 'ok', durationMs: 100,
-    })).not.toThrow()
-  })
-
-  // -- cron.error --
-  it('should accept valid cron.error payload', () => {
-    expect(() => validateEventPayload('cron.error', {
-      jobId: 'abc', jobName: 'test', error: 'boom', durationMs: 50,
-    })).not.toThrow()
-  })
-
-  // -- heartbeat.done --
-  it('should accept valid heartbeat.done payload', () => {
-    expect(() => validateEventPayload('heartbeat.done', {
-      reply: 'all good', reason: 'CHAT_YES', durationMs: 200, delivered: true,
-    })).not.toThrow()
-  })
-
-  // -- heartbeat.skip --
-  it('should accept heartbeat.skip with optional parsedReason', () => {
-    expect(() => validateEventPayload('heartbeat.skip', {
-      reason: 'ack', parsedReason: 'All systems normal.',
-    })).not.toThrow()
-  })
-
-  it('should accept heartbeat.skip without parsedReason', () => {
-    expect(() => validateEventPayload('heartbeat.skip', {
-      reason: 'outside-active-hours',
-    })).not.toThrow()
-  })
-
-  it('should reject heartbeat.skip with missing reason', () => {
-    expect(() => validateEventPayload('heartbeat.skip', {
-      parsedReason: 'something',
-    })).toThrow(/Invalid payload.*heartbeat\.skip/)
-  })
-
-  // -- heartbeat.error --
-  it('should accept valid heartbeat.error payload', () => {
-    expect(() => validateEventPayload('heartbeat.error', {
-      error: 'timeout', durationMs: 5000,
-    })).not.toThrow()
-  })
-
   // -- message.received --
   it('should accept valid message.received payload', () => {
     expect(() => validateEventPayload('message.received', {
@@ -113,26 +65,75 @@ describe('validateEventPayload', () => {
     })).toThrow(/Invalid payload.*message\.sent/)
   })
 
-  // -- task.* --
-  it('should accept valid task.requested payload', () => {
-    expect(() => validateEventPayload('task.requested', {
-      prompt: 'check overnight moves',
+  // -- agent.work.requested --
+  it('should accept valid agent.work.requested payload', () => {
+    expect(() => validateEventPayload('agent.work.requested', {
+      source: 'task',
+      prompt: 'investigate',
     })).not.toThrow()
   })
 
-  it('should reject task.requested without prompt', () => {
-    expect(() => validateEventPayload('task.requested', {})).toThrow(/Invalid payload.*task\.requested/)
-  })
-
-  it('should accept valid task.done payload', () => {
-    expect(() => validateEventPayload('task.done', {
-      prompt: 'hi', reply: 'ok', durationMs: 120,
+  it('should accept agent.work.requested with metadata', () => {
+    expect(() => validateEventPayload('agent.work.requested', {
+      source: 'cron',
+      prompt: 'check market',
+      metadata: { jobId: 'abc', jobName: 'daily' },
     })).not.toThrow()
   })
 
-  it('should accept valid task.error payload', () => {
-    expect(() => validateEventPayload('task.error', {
-      prompt: 'hi', error: 'boom', durationMs: 50,
+  it('should reject agent.work.requested with unknown source', () => {
+    expect(() => validateEventPayload('agent.work.requested', {
+      source: 'bogus',
+      prompt: 'x',
+    })).toThrow(/Invalid payload.*agent\.work\.requested/)
+  })
+
+  it('should reject agent.work.requested without prompt', () => {
+    expect(() => validateEventPayload('agent.work.requested', {
+      source: 'task',
+    })).toThrow(/Invalid payload.*agent\.work\.requested/)
+  })
+
+  // -- agent.work.done --
+  it('should accept valid agent.work.done payload', () => {
+    expect(() => validateEventPayload('agent.work.done', {
+      source: 'heartbeat',
+      reply: 'BTC alert',
+      durationMs: 200,
+      delivered: true,
+    })).not.toThrow()
+  })
+
+  it('should reject agent.work.done with missing delivered field', () => {
+    expect(() => validateEventPayload('agent.work.done', {
+      source: 'heartbeat',
+      reply: 'x',
+      durationMs: 100,
+    })).toThrow(/Invalid payload.*agent\.work\.done/)
+  })
+
+  // -- agent.work.skip --
+  it('should accept valid agent.work.skip payload', () => {
+    expect(() => validateEventPayload('agent.work.skip', {
+      source: 'heartbeat',
+      reason: 'outside-active-hours',
+    })).not.toThrow()
+  })
+
+  it('should accept agent.work.skip with arbitrary metadata', () => {
+    expect(() => validateEventPayload('agent.work.skip', {
+      source: 'heartbeat',
+      reason: 'duplicate',
+      metadata: { parsedReason: 'BTC alert (first 80 chars)' },
+    })).not.toThrow()
+  })
+
+  // -- agent.work.error --
+  it('should accept valid agent.work.error payload', () => {
+    expect(() => validateEventPayload('agent.work.error', {
+      source: 'cron',
+      error: 'AI down',
+      durationMs: 5,
     })).not.toThrow()
   })
 
@@ -145,5 +146,14 @@ describe('validateEventPayload', () => {
 
   it('should pass for unregistered type with null payload', () => {
     expect(() => validateEventPayload('unknown.type', null)).not.toThrow()
+  })
+
+  // -- legacy types (now removed from internal map but accepted on webhook wire) --
+  it('legacy task.requested type is no longer in AgentEventMap', () => {
+    // The webhook layer handles wire-level legacy alias translation.
+    // Validation against the canonical type happens after translation.
+    expect(AgentEventSchemas).not.toHaveProperty('task.requested')
+    expect(AgentEventSchemas).not.toHaveProperty('heartbeat.done')
+    expect(AgentEventSchemas).not.toHaveProperty('cron.done')
   })
 })
