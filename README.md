@@ -37,7 +37,7 @@ Alice runs on your own machine, because trading involves private keys and real m
 
 ### Research & Analysis
 
-- **Market data** — equity, crypto, commodity, currency, and macro data via TypeScript-native OpenBB engine. Unified cross-asset symbol search and technical indicator calculator
+- **Market data** — equity, crypto, commodity, currency, and macro data, **zero API keys out of the box**: low-frequency boards and datasets are served by the hosted **TraderHub** (https://traderhub.openalice.ai), with your own provider keys as the fallback path. Unified cross-asset symbol search and technical indicator calculator
 - **Fundamental research** — company profiles, financial statements, ratios, analyst estimates, earnings calendar, insider trading, and market movers. Currently deepest for equities, expanding to other asset classes
 - **News** — background RSS collection with archive search
 
@@ -206,6 +206,8 @@ agent runtime that drives trading decisions.
 
 **AI Provider** — Alice runs no model in-process; the model loop lives inside the native workspace CLI (Claude Code / Codex / opencode / Pi). What Alice keeps is a **credential vault**: api-key credentials, each declaring which wire shapes it can speak (Anthropic Messages / OpenAI Chat Completions / OpenAI Responses), injected into workspaces. Subscription logins (Claude Pro/Max, ChatGPT) live in the CLI's own login, not in Alice.
 
+**Data Hub (TraderHub)** — The hosted low-frequency data source. Market boards (macro, movers, calendars, global macro, Fed, shipping, term structure, sector rotation) and keyed datasets (FRED / EIA / BLS series, FMP calendars, FX rates) resolve **hub → your own keys → loud error**, so a fresh install needs zero data-provider accounts. Every payload is stamped with its serving path (`hub` / `local`) and staleness — explicit, never silent. The hub is a convenience layer, not a correctness dependency: switch it off (Settings › Market Data) or point `baseUrl` at a self-hosted instance and behavior falls back to exactly the bring-your-own-keys model. K-lines and quotes deliberately stay off the hub — realtime data comes from your broker (via UTA) or vendor, where the incentives live. Hub responses are shape-checked data only, never configuration.
+
 **Workspace** — A directory + git repo + persistent terminal session running a native agent CLI (`claude`, `codex`, `opencode`, `pi`, or `shell`) of your choice. OpenAlice plumbs its MCP servers into the workspace via `.mcp.json`, so the agent inside sees the workspace's local files plus OpenAlice's full tool surface (trading, market data, news, analysis). Workspaces live under `~/.openalice/workspaces/<wsId>/` — each is its own self-contained scratch directory the agent can read, write, and `git commit` inside. This is the recommended substrate for any non-trivial AI work: native prompt cache, native CLI rendering, no protocol shim between you and the model. Capability extensions (browser automation, third-party CLIs, custom scrapers) ship as new workspace **templates** rather than `src/` dependencies, keeping the main repo small.
 
 **Templates & satellite repos** — A workspace template is a bootstrap script + initial file set that materializes a workspace of a particular shape (today: `chat`, `auto-quant`). Templates are how OpenAlice's ecosystem grows without bloating the main repo: when a new capability (a research toolkit, a backtest harness, a custom MCP server) is worth packaging, it lives in its own **satellite repo** that a template clones at bootstrap time. The main repo deliberately doesn't accept ecosystem PRs — it owns the Trading domain and the workspace launcher; everything else routes through satellite repos referenced by templates. Means template authors can ship on their own cadence, and OpenAlice's `src/` stays small.
@@ -218,7 +220,7 @@ Chatting with Alice happens inside a **workspace**: a directory + git repo + a p
 
 - **Native prompt cache.** Claude Code, Codex, and the other agent CLIs implement vendor-specific cache control we can't replicate. On a long conversation this is often a 10× cost reduction.
 - **Native frontend.** TUI rendering, syntax highlighting, diff display — the CLI vendor has already tuned these for their model.
-- **Full tool surface.** The CLI sees the workspace's local files plus OpenAlice's MCP tools (trading, market data, news, analysis). No "greatest-common-denominator" trimming.
+- **Full tool surface.** The CLI sees the workspace's local files plus OpenAlice's MCP tools (trading, market data, news, analysis). No "greatest-common-denominator" trimming. Market data needs no API keys by default — the Data Hub serves it.
 - **No protocol shim.** Nothing sits between you and the model — whatever the CLI can do, you can do.
 
 The only requirement: the CLI binary has to be installed on the host running OpenAlice (the Docker image bundles `claude` and `codex`).
@@ -352,7 +354,8 @@ login screen on first browser visit, the session cookie lasts 7 days.
 docker logs openalice 2>&1 | grep -A1 'admin token'
 ```
 
-**Rotate the token** — delete `data/config/auth.json` and restart. The
+**Rotate the token** — delete `~/.openalice/data/config/auth.json` (in
+Docker: `<volume>/data/config/auth.json`) and restart. The
 next boot prints a fresh token and revokes all existing sessions.
 
 **Escape hatch** — `OPENALICE_DISABLE_AUTH=1` turns the gate off. Only
@@ -402,9 +405,69 @@ for how to retrieve the first-run token from `docker logs`.
   Debians don't have, and workspace bootstrap scripts need `bash` + POSIX
   utils. Alpine doesn't qualify on either count (musl libc, no bash).
 
+## Remote access (Tailscale / LAN / reverse proxy)
+
+Once the bind + admin token basics are in place, OpenAlice works over
+any network path. Ordered from most to least recommended:
+
+**Tailscale / VPN / LAN — direct.** Bind a non-loopback interface and
+log in with the admin token. No origin configuration needed: the UI,
+the API, and the workspace PTY WebSocket all accept same-origin
+requests regardless of which host you reached them through — a LAN IP,
+a Tailscale IP, a MagicDNS name.
+
+```bash
+OPENALICE_BIND_HOST=0.0.0.0 node dist/main.js   # the Docker image already binds 0.0.0.0
+```
+
+Then open `http://<machine-ip-or-tailnet-name>:47331` and paste the
+admin token. Tailscale Serve also works (and gives you HTTPS for free) —
+point it at `127.0.0.1:47331` and you don't even need to change the bind.
+
+**Reverse proxy (Caddy / nginx) — for HTTPS or a domain.** Terminate
+TLS at the proxy and tell Alice which peer to trust:
+
+```bash
+OPENALICE_TRUSTED_PROXIES=127.0.0.1   # the proxy's IP, as Alice sees it
+```
+
+Two things to know:
+
+- Setting `OPENALICE_TRUSTED_PROXIES` disables the localhost bypass —
+  required, since every request now arrives from the proxy's IP. It also
+  makes Alice honor `X-Forwarded-Proto` / `X-Forwarded-For` from that
+  peer (and only that peer).
+- The proxy must pass through `Host`, the WebSocket `Upgrade` headers,
+  and `X-Forwarded-Proto` (so the session cookie is marked `Secure`).
+  Caddy's `reverse_proxy` does all three out of the box. For nginx:
+
+  ```nginx
+  location / {
+    proxy_pass http://127.0.0.1:47331;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+  }
+  ```
+
+**Public internet.** Mechanically the same as the reverse-proxy setup,
+but think twice: this is a trading workbench holding broker
+credentials. Prefer keeping it inside a tailnet/VPN; if you do expose
+it, HTTPS is non-negotiable and proxy-level auth (basic auth, OAuth
+proxy, client certs) in front of Alice's own token gate is worth the
+extra step.
+
+**Cross-origin topologies** (UI served from a different origin than the
+backend — none of the setups above need this): allowlist the UI's
+origin explicitly with `WEB_TERMINAL_ALLOWED_ORIGINS=<origin>[,…]` for
+the PTY WebSocket and `OPENALICE_CSRF_TRUSTED_ORIGINS=<origin>[,…]` for
+mutating API calls.
+
 ## Configuration
 
-All config lives in `data/config/` as JSON files with Zod validation. Missing files fall back to sensible defaults. You can edit these files directly or use the Web UI.
+All config lives in `~/.openalice/data/config/` as JSON files with Zod validation — one global store shared by dev checkouts and the desktop app (the `OPENALICE_HOME` env var overrides the root; Docker uses the mounted volume). Missing files fall back to sensible defaults. You can edit these files directly or use the Web UI — except `accounts.json`, which is sealed (encrypted at rest) and managed through the UI.
 
 **AI Provider** — The model runs inside the workspace CLI using its own login — e.g. your local Claude Code or Codex login, no API key needed. For api-key providers (Anthropic, OpenAI, Google, GLM, MiniMax, Kimi, DeepSeek, …), add credentials in the Web UI's **AI Provider** vault; each credential declares the wire shapes it speaks and gets injected into workspaces, picking the shape the target agent uses. Subscription logins stay in the CLI.
 
@@ -419,16 +482,16 @@ All config lives in `data/config/` as JSON files with Zod validation. Missing fi
 | `connectors.json` | Web/MCP server ports |
 | `web-subchannels.json` | Web UI chat sub-channel definitions (per-channel system prompt + disabled-tools overrides) |
 | `tools.json` | Tool enable/disable configuration |
-| `market-data.json` | Data backend (`typebb-sdk` / `openbb-api`), per-asset-class providers, provider API keys, embedded HTTP server config |
+| `market-data.json` | Data Hub (`enabled` / `baseUrl`), per-asset-class vendors, provider API keys (fallback when the hub is off or uncovered) |
 | `news.json` | RSS feeds, fetch interval, retention period |
 | `snapshot.json` | Account snapshot interval and retention |
 | `compaction.json` | Context window limits, auto-compaction thresholds |
 
 The persona prompt uses a **default + user override** pattern:
 
-| Default (git-tracked) | User override (gitignored) |
+| Default (git-tracked) | User override |
 |------------------------|---------------------------|
-| `default/persona.default.md` | `data/brain/persona.md` |
+| `default/persona.default.md` | `~/.openalice/data/brain/persona.md` |
 
 On first run, defaults are auto-copied to the user override path. Edit the user files to customize without touching version control.
 

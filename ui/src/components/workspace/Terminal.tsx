@@ -3,7 +3,6 @@ import type { ReactElement } from 'react';
 
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal as Xterm } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 
@@ -11,6 +10,7 @@ import {
   parseServerControl,
   type ClientControlMessage,
 } from './protocol';
+import { attachWebglRenderer } from './renderer';
 import { darkTheme } from './theme';
 // Lazy-import so the demo subtree (transcripts, fixtures, handlers) is
 // dynamic-imported only when demo mode is actually on. With a static import,
@@ -127,14 +127,11 @@ export function TerminalView(props: TerminalViewProps): ReactElement {
     term.loadAddon(new WebLinksAddon());
     term.open(container);
 
-    let webgl: WebglAddon | null = null;
-    try {
-      webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl?.dispose());
-      term.loadAddon(webgl);
-    } catch {
-      webgl = null;
-    }
+    // WebGL by default; degrades to the DOM renderer on addon failure /
+    // context loss, or when the `openalice.terminal.renderer` escape hatch
+    // forces 'dom' (GPU-pipeline corruption can't be auto-detected — see
+    // renderer.ts).
+    const webgl = attachWebglRenderer(term);
 
     safeFit(fit);
     let lastCols = term.cols;

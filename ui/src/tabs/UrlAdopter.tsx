@@ -41,6 +41,10 @@ export function UrlAdopter() {
         <Route path="/news" element={<AdoptStatic spec={{ kind: 'news', params: {} }} />} />
         <Route path="/market" element={<AdoptStatic spec={{ kind: 'market-list', params: {} }} />} />
         <Route path="/market/rotation" element={<AdoptStatic spec={{ kind: 'market-rotation', params: {} }} />} />
+        {/* Static `boards` segment outranks /market/:assetClass/:symbol in
+            react-router's specificity scoring, so order here doesn't matter —
+            but keep it above the dynamic route for readability. */}
+        <Route path="/market/boards/:board" element={<AdoptMarketBoard />} />
         <Route path="/market/:assetClass/:symbol" element={<AdoptMarketDetail />} />
         {/* /trading-as-git no longer creates a tab — sidebar-only activity. */}
         <Route path="/trading-as-git" element={<SetSidebarOnly section="trading-as-git" />} />
@@ -129,6 +133,20 @@ function AdoptMarketDetail() {
           symbol,
           ...(source ? { source } : {}),
         },
+      }}
+    />
+  )
+}
+
+function AdoptMarketBoard() {
+  const { board } = useParams<{ board: string }>()
+  const valid: ReadonlyArray<string> = ['movers', 'calendar', 'macro', 'term-structure', 'global-macro', 'shipping', 'fed']
+  if (!board || !valid.includes(board)) return <Navigate to="/market" replace />
+  return (
+    <AdoptStatic
+      spec={{
+        kind: 'market-board',
+        params: { board: board as Extract<ViewSpec, { kind: 'market-board' }>['params']['board'] },
       }}
     />
   )
@@ -233,6 +251,7 @@ function specToSection(spec: ViewSpec): ActivitySection {
     case 'news':               return 'news'
     case 'market-list':
     case 'market-rotation':
+    case 'market-board':
     case 'market-detail':      return 'market'
     case 'settings':           return 'settings'
     case 'dev':                return 'dev'

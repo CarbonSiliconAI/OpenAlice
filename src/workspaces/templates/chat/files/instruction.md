@@ -1,33 +1,52 @@
 # Chat workspace
 
 OpenAlice's market/data tools are available here — reachable through the
-OpenAlice MCP server and/or the `alice` CLI on your shell PATH, depending on how
+OpenAlice MCP server and/or the CLIs on your shell PATH, depending on how
 this workspace was launched. Check what's actually wired before you start:
 
 - `/mcp` — shows the connected OpenAlice MCP server(s)
-- `alice --help` — lists the CLI command groups (when `alice` is on PATH)
+- `traderhub --help` / `alice --help` — the CLI command groups (when on PATH)
 
 Use whichever is available; if a data tool isn't where you expect, check the
-other. Trading and scheduling stay on MCP by design.
+other. Scheduling (cron) stays on MCP by design.
 
-## OpenAlice CLIs (`alice`, `alice-workspace`)
+## OpenAlice CLIs (`traderhub`, `alice`, `alice-workspace`, `alice-uta`)
 
-Two CLIs on your shell PATH, split by what they touch — handy for a quick
+Four CLIs on your shell PATH, split by what they touch — handy for a quick
 lookup, a pipe, or a grep without a tool round-trip:
 
 ```bash
-alice --help                       # MARKET DATA: news/market/equity/economy/analysis/think
-alice market search --query AAPL   # find a symbol
-alice news grep --pattern BTC      # search collected news, then…
-alice news read --id <id>          # …read one article by its stable id
+traderhub --help                   # LOW-FREQUENCY MARKET DATA: boards, fundamentals,
+                                   #   macro series, calendars, ETF, shipping, Fed
+traderhub board get --board macro  # a finished board in one call
+traderhub equity profile --symbol AAPL
+
+alice --help                       # WORKBENCH: rss-archive/market-search/analysis/think
+alice market search --query AAPL   # find a symbol (barIds for charts/quant)
+alice rss grep --pattern BTC       # search the collected-RSS archive, then…
+alice rss read --id <id>           # …read one article by its stable id
 
 alice-workspace --help             # COLLABORATION: inbox push + entity tracking
+
+alice-uta --help                   # TRADING: accounts, portfolio, orders,
+                                   #   trading-as-git approval flow (MUTATING —
+                                   #   resolve contracts first, report results)
 ```
 
-Both hit the same backend the MCP tools do. Output is JSON on stdout; a non-zero
+All hit the same backend the MCP tools do. Output is JSON on stdout; a non-zero
 exit means it failed. (If this workspace has no `openalice` MCP tool server, the
-`alice*` CLIs are how you reach OpenAlice — the bundled `openalice-cli` skill is
-the full playbook.)
+CLIs are how you reach OpenAlice — the bundled `traderhub` and `openalice-cli`
+skills are the full playbooks.)
+
+## Beyond Alice's data — `opencli` (optional, read-only)
+
+For data Alice doesn't ship — social sentiment, options flow, CN money-flow,
+global news frontpages, research papers — the bundled `opencli-reader` skill
+teaches a community CLI with ~160 site adapters. It is NOT pre-installed:
+if a task would benefit and it's missing, say what's missing and ask the
+user whether to install it — never install silently, never silently work
+with thinner data. Numbers Alice ships (quotes, fundamentals, macro) stay on
+`traderhub`/`alice`; opencli data never directly drives a trading decision.
 
 ## Handing work back to the user
 

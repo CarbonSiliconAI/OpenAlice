@@ -4,6 +4,24 @@ import { createWorkspace, type AgentInfo, type Workspace } from '../components/w
 export const TAG_HINT = 'a-z, 0-9, "-", "_", up to 33 chars'
 export const TAG_RE = /^[a-z0-9][a-z0-9_-]{0,32}$/
 
+/**
+ * Derive a default tag for a new workspace: `<template>-<month><day>`
+ * (`chat-jun11`), suffixed `-2`, `-3`, … on collision with existing tags.
+ * Truncates the template part so the result always fits TAG_RE's 33 chars.
+ */
+export function defaultTagFor(template: string, workspaces: readonly Workspace[]): string {
+  const now = new Date()
+  const month = now.toLocaleString('en-US', { month: 'short' }).toLowerCase()
+  const date = `${month}${now.getDate()}`
+  const head = template.slice(0, 33 - date.length - 4) // room for "-" + date + "-NN"
+  const base = `${head}-${date}`
+  const taken = new Set(workspaces.map((w) => w.tag))
+  if (!taken.has(base)) return base
+  let i = 2
+  while (taken.has(`${base}-${i}`)) i++
+  return `${base}-${i}`
+}
+
 interface UseCreateWorkspaceOpts {
   /** Workspace template to create from. Empty string = not yet selected. */
   template: string
@@ -52,7 +70,7 @@ interface UseCreateWorkspaceState {
  */
 export function useCreateWorkspace(opts: UseCreateWorkspaceOpts): UseCreateWorkspaceState {
   const [tag, setTag] = useState('')
-  const [toolAccess, setToolAccess] = useState<ToolAccess>('mcp')
+  const [toolAccess, setToolAccess] = useState<ToolAccess>('cli')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

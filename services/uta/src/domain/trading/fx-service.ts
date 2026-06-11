@@ -86,20 +86,62 @@ export class FxService {
   private readonly client?: CurrencyClientLike
   /** Track which default-rate currencies have already been warned about, to avoid log spam. */
   private readonly defaultWarned = new Set<string>()
+  private readonly hub?: { enabled: boolean; baseUrl: string }
+  /** Whole hub FX table, cached. The hub refreshes hourly; 30min here. */
+  private hubTable: { rates: Record<string, { rate: number; updatedAt: string }>; fetchedAt: number } | null = null
+  private hubDownUntil = 0
 
   /**
    * @param currencyClient — optional. Without it, FxService works purely from the default table.
    * @param ttlMs — cache TTL in milliseconds. Default 5 minutes.
+   * @param hub — optional TraderHub config; one GET serves the whole table.
    */
-  constructor(currencyClient?: CurrencyClientLike, ttlMs = 5 * 60_000) {
+  constructor(currencyClient?: CurrencyClientLike, ttlMs = 5 * 60_000, hub?: { enabled: boolean; baseUrl: string }) {
     this.client = currencyClient
     this.ttlMs = ttlMs
+    this.hub = hub
+  }
+
+  /**
+   * Hub FX table lookup. DATA boundary: rates are shape- and
+   * sanity-checked (finite, > 0) and only ever feed display-level USD
+   * conversion — never order placement.
+   */
+  private async hubRate(key: string): Promise<{ rate: number; updatedAt: string } | null> {
+    if (!this.hub?.enabled || !this.hub.baseUrl) return null
+    const now = Date.now()
+    if (this.hubTable && now - this.hubTable.fetchedAt < 30 * 60_000) {
+      return this.hubTable.rates[key] ?? null
+    }
+    if (now < this.hubDownUntil) return this.hubTable?.rates[key] ?? null
+    try {
+      const res = await fetch(`${this.hub.baseUrl.replace(/\/+$/, '')}/api/data/fx-rates`, {
+        signal: AbortSignal.timeout(5_000),
+        headers: { Accept: 'application/json' },
+      })
+      if (!res.ok) throw new Error(String(res.status))
+      const data = (await res.json()) as { counter?: string; rates?: Record<string, { rate?: unknown; updatedAt?: unknown }> }
+      if (data?.counter !== 'USD' || !data.rates) throw new Error('non-contract shape')
+      const rates: Record<string, { rate: number; updatedAt: string }> = {}
+      for (const [ccy, row] of Object.entries(data.rates)) {
+        if (typeof row?.rate === 'number' && Number.isFinite(row.rate) && row.rate > 0) {
+          rates[ccy.toUpperCase()] = { rate: row.rate, updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : new Date().toISOString() }
+        }
+      }
+      if (Object.keys(rates).length === 0) throw new Error('empty table')
+      this.hubTable = { rates, fetchedAt: now }
+      return rates[key] ?? null
+    } catch {
+      this.hubDownUntil = now + 60_000
+      return this.hubTable?.rates[key] ?? null
+    }
   }
 
   /**
    * Get the USD exchange rate for a given currency.
    *
-   * Priority: live (fresh) → live (stale) → default table → 1:1 fallback.
+   * Priority: fresh cache → hub table → vendor client → stale cache →
+   * default table → 1:1 fallback.
    */
   async getRate(from: string): Promise<FxRate> {
     const key = from.toUpperCase()
@@ -113,7 +155,14 @@ export class FxService {
       return { rate: cached.rate, source: 'live', updatedAt: cached.updatedAt }
     }
 
-    // 2. Try to fetch fresh data (only if we have a client)
+    // 2. Hub FX table — one cached GET covers every currency.
+    const hub = await this.hubRate(key)
+    if (hub) {
+      this.liveRates.set(key, { rate: hub.rate, updatedAt: hub.updatedAt, fetchedAt: now })
+      return { rate: hub.rate, source: 'live', updatedAt: hub.updatedAt }
+    }
+
+    // 3. Per-currency vendor fetch (only if we have a client)
     if (this.client) {
       try {
         const snapshots = await this.client.getSnapshots({
@@ -132,12 +181,12 @@ export class FxService {
       }
     }
 
-    // 3. Stale live cache (expired but better than nothing)
+    // 4. Stale live cache (expired but better than nothing)
     if (cached) {
       return { rate: cached.rate, source: 'cached', updatedAt: cached.updatedAt, stale: true }
     }
 
-    // 4. Default table
+    // 5. Default table
     const def = DEFAULT_RATES[key]
     if (def) {
       if (!this.defaultWarned.has(key)) {
@@ -147,7 +196,7 @@ export class FxService {
       return { rate: def.rate, source: 'default', updatedAt: def.updatedAt }
     }
 
-    // 5. Unknown currency — 1:1 fallback
+    // 6. Unknown currency — 1:1 fallback
     if (!this.defaultWarned.has(key)) {
       this.defaultWarned.add(key)
       console.warn(`FxService: unknown currency "${key}", defaulting to 1:1 USD`)

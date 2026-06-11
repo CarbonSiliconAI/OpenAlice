@@ -21,6 +21,7 @@ import { createPersonaRoutes } from './routes/persona.js'
 import { createNewsRoutes } from './routes/news.js'
 import { createMarketRoutes } from './routes/market.js'
 import { createBarsRoutes } from './routes/bars.js'
+import { createReferenceRoutes } from './routes/reference.js'
 import { createInboxRoutes } from './routes/inbox.js'
 import { createEntityRoutes } from './routes/entities.js'
 import { createVersionRoutes } from './routes/version.js'
@@ -160,7 +161,7 @@ export class WebPlugin implements Plugin {
     const csrfTrustedOrigins = (process.env['OPENALICE_CSRF_TRUSTED_ORIGINS'] ?? '')
       .split(',').map((s) => s.trim()).filter(Boolean)
     const authDisabled = process.env['OPENALICE_DISABLE_AUTH'] === '1'
-    app.route('/api/auth', createAuthRoutes())
+    app.route('/api/auth', createAuthRoutes({ trustedProxies }))
     app.use('*', createAuthMiddleware({
       trustedProxies,
       csrfTrustedOrigins,
@@ -205,6 +206,7 @@ export class WebPlugin implements Plugin {
     app.route('/api/news', createNewsRoutes(ctx))
     app.route('/api/market', createMarketRoutes(ctx))
     app.route('/api/bars', createBarsRoutes(ctx))
+    app.route('/api/reference', createReferenceRoutes(ctx))
     app.route('/api/persona', createPersonaRoutes())
     app.route('/api/inbox', createInboxRoutes({ inboxStore: ctx.inboxStore }))
     app.route('/api/version', createVersionRoutes())

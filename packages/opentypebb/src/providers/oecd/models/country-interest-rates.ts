@@ -10,6 +10,7 @@ import { Fetcher } from '../../../core/provider/abstract/fetcher.js'
 import { CountryInterestRatesDataSchema } from '../../../standard-models/country-interest-rates.js'
 import { EmptyDataError } from '../../../core/provider/utils/errors.js'
 import { nativeFetch } from '../../../core/provider/utils/helpers.js'
+import { resolveCountryCodes } from '../utils/oecd-helpers.js'
 
 export const OECDInterestRatesQueryParamsSchema = z.object({
   country: z.string().default('united_states').describe('The country to get data for.'),
@@ -64,7 +65,7 @@ export class OECDCountryInterestRatesFetcher extends Fetcher {
     query: OECDInterestRatesQueryParams,
     _credentials: Record<string, string> | null,
   ): Promise<Record<string, unknown>[]> {
-    const countryCode = COUNTRY_MAP[query.country] ?? query.country.toUpperCase()
+    const countryCode = resolveCountryCodes(query.country)
     const duration = DURATION_MAP[query.duration] ?? 'IR3TIB'
     const startPeriod = query.start_date ? query.start_date.slice(0, 7) : ''
     const endPeriod = query.end_date ? query.end_date.slice(0, 7) : ''

@@ -10,9 +10,14 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 import type { EquityClientLike } from '@/domain/market-data/client/types'
-import { fetchSectorRotation } from '@/domain/analysis/sector-rotation.js'
+import { fetchSectorRotation, type SectorRotationResult } from '@/domain/analysis/sector-rotation.js'
+import { createHubFetcher, markLocal, type HubConfig } from '@/domain/market-data/reference/hub.js'
+import type { ReferenceMeta } from '@/domain/market-data/reference/types.js'
 
-export function createSectorRotationTools(equityClient: EquityClientLike) {
+export function createSectorRotationTools(equityClient: EquityClientLike, hub?: HubConfig) {
+  // Same hub-first resolution as the /api/market/sector-rotation route —
+  // the agent and the UI must read the same board.
+  const viaHub = createHubFetcher(hub)
   return {
     sectorRotation: tool({
       description: `Read sector rotation — which GICS sectors capital is rotating into or out of.
@@ -34,7 +39,12 @@ This is the broad-sector lens. For a specific theme (robotics, uranium, cybersec
 ...) use etfSearch + etfGetInfo to go one level deeper. See the methodology field for the
 exact definitions and the fund-flow-proxy caveat.`,
       inputSchema: z.object({}).meta({ examples: [{}] }),
-      execute: async () => fetchSectorRotation(equityClient),
+      execute: async (): Promise<SectorRotationResult & { meta: ReferenceMeta }> => {
+        const fromHub = await viaHub<SectorRotationResult & { meta: ReferenceMeta }>('rotation')
+        if (fromHub) return fromHub
+        const local = await fetchSectorRotation(equityClient)
+        return markLocal({ ...local, meta: { provider: 'yfinance', asOf: local.asOf } })
+      },
     }),
   }
 }

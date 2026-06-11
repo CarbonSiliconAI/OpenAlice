@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { Fetcher } from '../../../core/provider/abstract/fetcher.js'
 import { RetailPricesDataSchema } from '../../../standard-models/retail-prices.js'
 import { EmptyDataError } from '../../../core/provider/utils/errors.js'
-import { fetchOecdCsv, resolveCountryCode, periodToDate, CODE_TO_NAME, FREQ_MAP, filterAndSort } from '../utils/oecd-helpers.js'
+import { fetchOecdCsv, resolveCountryCodes, periodToDate, CODE_TO_NAME, FREQ_MAP, filterAndSort } from '../utils/oecd-helpers.js'
 
 export const OECDRetailPricesQueryParamsSchema = z.object({
   country: z.string().default('united_states'),
@@ -29,7 +29,7 @@ export class OECDRetailPricesFetcher extends Fetcher {
     query: OECDRetailPricesQueryParams,
     _credentials: Record<string, string> | null,
   ): Promise<Record<string, unknown>[]> {
-    const cc = resolveCountryCode(query.country)
+    const cc = resolveCountryCodes(query.country)
     const freq = FREQ_MAP[query.frequency] ?? 'M'
     const rows = await fetchOecdCsv(
       'OECD.SDD.TPS,DSD_PRICES@DF_PRICES_ALL,1.0',

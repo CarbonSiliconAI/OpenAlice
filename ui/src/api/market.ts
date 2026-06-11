@@ -50,13 +50,21 @@ export type FinancialRatios = Record<string, unknown>
 export type KeyMetrics = Record<string, unknown>
 export type FinancialStatementRow = Record<string, unknown>
 
+/** First-party per-symbol endpoints (same {results, provider} envelope). */
 function equityEndpoint<T>(
   path: string,
   params: Record<string, string | number> = {},
 ): Promise<OBBjectResponse<T>> {
   const qs = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) qs.set(k, String(v))
-  return fetchJson(`/api/market-data-v1/equity/${path}?${qs}`)
+  return fetchJson(`/api/market/equity/${path}?${qs}`)
+}
+
+/** Quote is realtime-family (operational identity, like K-lines) — it stays
+ *  on the legacy passthrough until the bar-layer/UTA quote arc takes it. */
+function quoteEndpoint<T>(symbol: string): Promise<OBBjectResponse<T>> {
+  const qs = new URLSearchParams({ symbol })
+  return fetchJson(`/api/market-data-v1/equity/price/quote?${qs}`)
 }
 
 export type RotationPeriod = '1D' | '1W' | '1M' | '3M' | '6M'
@@ -78,6 +86,8 @@ export interface SectorRotationRow {
 
 export interface SectorRotationResult {
   asOf: string
+  /** Present on hub-served (and new local) responses. */
+  meta?: { provider: string; asOf: string; origin?: 'hub' | 'local'; stale?: boolean }
   benchmark: { symbol: string; returns: Record<RotationPeriod, number | null> }
   /** Sorted by rotation_score desc; null-score rows at the bottom. */
   sectors: SectorRotationRow[]
@@ -119,12 +129,12 @@ export const marketApi = {
   /** Equity-specific endpoints — Alice infers provider from config, no ?provider=. */
   equity: {
     profile: (symbol: string) => equityEndpoint<EquityProfile>('profile', { symbol }),
-    quote: (symbol: string) => equityEndpoint<EquityQuote>('price/quote', { symbol }),
-    metrics: (symbol: string) => equityEndpoint<KeyMetrics>('fundamental/metrics', { symbol }),
-    ratios: (symbol: string) => equityEndpoint<FinancialRatios>('fundamental/ratios', { symbol }),
-    balance: (symbol: string) => equityEndpoint<FinancialStatementRow>('fundamental/balance', { symbol }),
-    income: (symbol: string) => equityEndpoint<FinancialStatementRow>('fundamental/income', { symbol }),
-    cashflow: (symbol: string) => equityEndpoint<FinancialStatementRow>('fundamental/cash', { symbol }),
+    quote: (symbol: string) => quoteEndpoint<EquityQuote>(symbol),
+    metrics: (symbol: string) => equityEndpoint<KeyMetrics>('metrics', { symbol }),
+    ratios: (symbol: string) => equityEndpoint<FinancialRatios>('ratios', { symbol }),
+    balance: (symbol: string) => equityEndpoint<FinancialStatementRow>('balance', { symbol }),
+    income: (symbol: string) => equityEndpoint<FinancialStatementRow>('income', { symbol }),
+    cashflow: (symbol: string) => equityEndpoint<FinancialStatementRow>('cash', { symbol }),
   },
 }
 

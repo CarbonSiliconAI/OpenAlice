@@ -1,5 +1,5 @@
 /**
- * News Collector — Archive tools (globNews / grepNews / readNews)
+ * News Collector — collected-RSS archive tools (globRss / grepRss / readRss)
  *
  * Creates AI tools that query the persistent news store.
  * Uses endTime = new Date() (real-time mode, not backtesting).
@@ -18,14 +18,14 @@ export interface NewsToolContext {
   getNews: () => Promise<NewsItem[]>
 }
 
-export interface GlobNewsResult {
+export interface GlobRssResult {
   id: number
   title: string
   contentLength: number
   metadata: string
 }
 
-export interface GrepNewsResult {
+export interface GrepRssResult {
   id: number
   title: string
   matchedText: string
@@ -47,17 +47,17 @@ function matchesMetadataFilter(metadata: Record<string, string | null>, filter: 
 }
 
 /** Match news by title regex (like "ls" / "glob") */
-export async function globNews(
+export async function globRss(
   context: NewsToolContext,
   options: {
     pattern: string
     metadataFilter?: Record<string, string>
     limit?: number
   },
-): Promise<GlobNewsResult[]> {
+): Promise<GlobRssResult[]> {
   const news = await context.getNews()
   const regex = new RegExp(options.pattern, 'i')
-  const results: GlobNewsResult[] = []
+  const results: GlobRssResult[] = []
 
   for (const item of news) {
     if (options.metadataFilter && !matchesMetadataFilter(item.metadata, options.metadataFilter)) continue
@@ -77,7 +77,7 @@ export async function globNews(
 }
 
 /** Search news content by pattern (like "grep") */
-export async function grepNews(
+export async function grepRss(
   context: NewsToolContext,
   options: {
     pattern: string
@@ -85,11 +85,11 @@ export async function grepNews(
     metadataFilter?: Record<string, string>
     limit?: number
   },
-): Promise<GrepNewsResult[]> {
+): Promise<GrepRssResult[]> {
   const news = await context.getNews()
   const regex = new RegExp(options.pattern, 'gi')
   const contextChars = options.contextChars ?? 50
-  const results: GrepNewsResult[] = []
+  const results: GrepRssResult[] = []
 
   for (const item of news) {
     if (options.metadataFilter && !matchesMetadataFilter(item.metadata, options.metadataFilter)) continue
@@ -125,7 +125,7 @@ export async function grepNews(
 }
 
 /** Read full news content by stable id (like "cat") */
-export async function readNews(
+export async function readRss(
   context: NewsToolContext,
   options: { id: number },
 ): Promise<NewsItem | null> {
@@ -137,45 +137,50 @@ export async function readNews(
 
 export function createNewsArchiveTools(provider: INewsProvider) {
   return {
-    globNews: tool({
-      description: `Search collected news archive by title pattern (like "ls" / "glob").
+    globRss: tool({
+      description: `Search the collected-RSS archive by title pattern (like "ls" / "glob").
+
+The archive holds articles pulled from the user's SUBSCRIBED RSS feeds —
+coverage is exactly the feed list, not the news at large. Empty results mean
+"not in the subscribed feeds", not "nothing happened".
 
 Returns matching headlines with a stable \`id\`, title, content length, and metadata preview.
-Pass an \`id\` to readNews to read the full article — the id is stable across calls,
+Pass an \`id\` to readRss to read the full article — the id is stable across calls,
 so you do NOT need to repeat your \`lookback\`.
-Use this to quickly scan what's been happening in the market.
+Use this to quickly scan what the subscribed feeds picked up.
 
 Search pool: the most recent ${NEWS_LIMIT} items within \`lookback\` (or the
 most recent ${NEWS_LIMIT} overall when \`lookback\` is omitted). Older items
 within the lookback window are NOT searched. Your \`limit\` then bounds the
 match count returned from that pool.
 
-Example: globNews({ pattern: "BTC|Bitcoin", lookback: "1d" })`,
+Example: globRss({ pattern: "BTC|Bitcoin", lookback: "1d" })`,
       inputSchema: z.object({
-        pattern: z.string().describe('Regex to match against news titles'),
+        pattern: z.string().describe('Regex to match against article titles'),
         lookback: z.string().optional().describe(`Time range: "1h", "12h", "1d", "7d" (searches up to ${NEWS_LIMIT} most recent items in the window)`),
         metadataFilter: z.record(z.string(), z.string()).optional().describe('Filter by metadata key-value'),
         limit: z.number().int().positive().optional().describe('Max results'),
       }).meta({ examples: [{ pattern: 'BTC|Bitcoin', lookback: '1d' }] }),
       execute: async ({ pattern, lookback, metadataFilter, limit }) => {
-        return globNews(
+        return globRss(
           { getNews: () => provider.getNewsV2({ endTime: new Date(), lookback, limit: NEWS_LIMIT }) },
           { pattern, metadataFilter, limit },
         )
       },
     }),
 
-    grepNews: tool({
-      description: `Search collected news archive content by pattern (like "grep").
+    grepRss: tool({
+      description: `Search collected-RSS article content by pattern (like "grep").
 
-Returns matched text with surrounding context.
-Use this to find specific mentions in news articles.
+Searches articles pulled from the user's SUBSCRIBED RSS feeds (coverage = the
+feed list). Returns matched text with surrounding context.
+Use this to find specific mentions in the collected articles.
 
 Search pool: the most recent ${NEWS_LIMIT} items within \`lookback\` (or the
 most recent ${NEWS_LIMIT} overall when \`lookback\` is omitted). Older items
 within the lookback window are NOT searched.
 
-Example: grepNews({ pattern: "interest rate", lookback: "2d" })`,
+Example: grepRss({ pattern: "interest rate", lookback: "2d" })`,
       inputSchema: z.object({
         pattern: z.string().describe('Regex to search in title and content'),
         lookback: z.string().optional().describe(`Time range: "1h", "12h", "1d", "7d" (searches up to ${NEWS_LIMIT} most recent items in the window)`),
@@ -184,28 +189,28 @@ Example: grepNews({ pattern: "interest rate", lookback: "2d" })`,
         limit: z.number().int().positive().optional().describe('Max results'),
       }).meta({ examples: [{ pattern: 'interest rate', lookback: '2d' }] }),
       execute: async ({ pattern, lookback, contextChars, metadataFilter, limit }) => {
-        return grepNews(
+        return grepRss(
           { getNews: () => provider.getNewsV2({ endTime: new Date(), lookback, limit: NEWS_LIMIT }) },
           { pattern, contextChars, metadataFilter, limit },
         )
       },
     }),
 
-    readNews: tool({
-      description: `Read full content of a collected news item by stable id (like "cat").
+    readRss: tool({
+      description: `Read full content of a collected-RSS article by stable id (like "cat").
 
-Use after globNews/grepNews to read a specific article — pass the \`id\` from their
+Use after globRss/grepRss to read a specific article — pass the \`id\` from their
 results. The id is stable, so it resolves regardless of what \`lookback\` you used
 to find the item (no need to repeat it).`,
       inputSchema: z.object({
-        id: z.number().int().nonnegative().describe('Stable news id from globNews/grepNews results'),
+        id: z.number().int().nonnegative().describe('Stable article id from globRss/grepRss results'),
       }).meta({ examples: [{ id: 0 }] }),
       execute: async ({ id }) => {
-        const result = await readNews(
+        const result = await readRss(
           { getNews: () => provider.getNewsV2({ endTime: new Date(), limit: NEWS_LIMIT }) },
           { id },
         )
-        return result ?? { error: `News id ${id} not found` }
+        return result ?? { error: `Article id ${id} not found` }
       },
     }),
   }

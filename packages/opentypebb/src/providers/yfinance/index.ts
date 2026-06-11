@@ -35,6 +35,9 @@ import { YFinanceFuturesHistoricalFetcher } from './models/futures-historical.js
 import { YFinanceAvailableIndicesFetcher } from './models/available-indices.js'
 import { YFinanceEtfInfoFetcher } from './models/etf-info.js'
 import { YFinanceEtfSearchFetcher } from './models/etf-search.js'
+import { YFEtfHoldingsFetcher } from './models/etf-holdings.js'
+import { YFEtfSectorsFetcher } from './models/etf-sectors.js'
+import { YFInsiderTradingFetcher } from './models/insider-trading.js'
 import { YFinanceEquityScreenerFetcher } from './models/equity-screener.js'
 import { YFinanceFuturesCurveFetcher } from './models/futures-curve.js'
 import { YFinanceOptionsChainsFetcher } from './models/options-chains.js'
@@ -77,6 +80,11 @@ export const yfinanceProvider = new Provider({
     AvailableIndices: YFinanceAvailableIndicesFetcher,
     EtfInfo: YFinanceEtfInfoFetcher,
     EtfSearch: YFinanceEtfSearchFetcher,
+    // Keyless fallbacks for FMP-only cells (top-10 holdings / full sector
+    // weights / Form-4 insider rows via quoteSummary).
+    EtfHoldings: YFEtfHoldingsFetcher,
+    EtfSectors: YFEtfSectorsFetcher,
+    InsiderTrading: YFInsiderTradingFetcher,
     EquityScreener: YFinanceEquityScreenerFetcher,
     FuturesCurve: YFinanceFuturesCurveFetcher,
     OptionsChains: YFinanceOptionsChainsFetcher,

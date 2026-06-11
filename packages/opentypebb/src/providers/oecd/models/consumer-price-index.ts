@@ -10,6 +10,7 @@ import { Fetcher } from '../../../core/provider/abstract/fetcher.js'
 import { ConsumerPriceIndexDataSchema } from '../../../standard-models/consumer-price-index.js'
 import { EmptyDataError } from '../../../core/provider/utils/errors.js'
 import { nativeFetch } from '../../../core/provider/utils/helpers.js'
+import { resolveCountryCodes } from '../utils/oecd-helpers.js'
 
 export const OECDCPIQueryParamsSchema = z.object({
   country: z.string().default('united_states').describe('The country to get data for.'),
@@ -65,7 +66,7 @@ export class OECDConsumerPriceIndexFetcher extends Fetcher {
     query: OECDCPIQueryParams,
     _credentials: Record<string, string> | null,
   ): Promise<Record<string, unknown>[]> {
-    const countryCode = COUNTRY_MAP[query.country] ?? query.country.toUpperCase()
+    const countryCode = resolveCountryCodes(query.country)
     const freq = FREQ_MAP[query.frequency] ?? 'M'
     const methodology = query.harmonized ? 'HICP' : 'N'
     const units = query.transform === 'yoy' ? 'PA' : query.transform === 'period' ? 'PC' : 'IX'

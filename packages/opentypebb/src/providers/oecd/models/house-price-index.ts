@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { Fetcher } from '../../../core/provider/abstract/fetcher.js'
 import { HousePriceIndexDataSchema } from '../../../standard-models/house-price-index.js'
 import { EmptyDataError } from '../../../core/provider/utils/errors.js'
-import { fetchOecdCsv, resolveCountryCode, periodToDate, CODE_TO_NAME, FREQ_MAP, filterAndSort } from '../utils/oecd-helpers.js'
+import { fetchOecdCsv, resolveCountryCodes, periodToDate, CODE_TO_NAME, FREQ_MAP, filterAndSort } from '../utils/oecd-helpers.js'
 
 export const OECDHousePriceIndexQueryParamsSchema = z.object({
   country: z.string().default('united_states'),
@@ -28,11 +28,13 @@ export class OECDHousePriceIndexFetcher extends Fetcher {
     query: OECDHousePriceIndexQueryParams,
     _credentials: Record<string, string> | null,
   ): Promise<Record<string, unknown>[]> {
-    const cc = resolveCountryCode(query.country)
+    const cc = resolveCountryCodes(query.country)
     const freq = FREQ_MAP[query.frequency] ?? 'Q'
     const rows = await fetchOecdCsv(
-      'OECD.SDD.TPS,DSD_AN_HOUSE_PRICES@DF_HOUSE_PRICES,1.0',
-      `${cc}.${freq}.RHP._T.IX.`,
+      // Agency moved in the 2025/26 SDMX reshuffle (was OECD.SDD.TPS, versioned).
+      'OECD.ECO.MPD,DSD_AN_HOUSE_PRICES@DF_HOUSE_PRICES',
+      // New DSD is 4-dimensional: REF_AREA.FREQ.MEASURE.UNIT_MEASURE
+      `${cc}.${freq}.RHP.IX`,
     )
 
     return rows

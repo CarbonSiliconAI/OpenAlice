@@ -24,6 +24,9 @@ export class FedFredSeriesFetcher extends Fetcher {
     credentials: Record<string, string> | null,
   ): Promise<Record<string, unknown>[]> {
     const apiKey = getFredApiKey(credentials)
+    if (!apiKey) {
+      throw new Error('FRED API key required — set the fred provider key in Settings → Market Data (free at fred.stlouisfed.org).')
+    }
     const seriesIds = query.symbol.split(',').map(s => s.trim()).filter(Boolean)
     if (seriesIds.length === 0) throw new EmptyDataError('No series IDs provided.')
 

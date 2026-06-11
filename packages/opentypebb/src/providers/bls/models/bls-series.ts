@@ -8,11 +8,12 @@ import { Fetcher } from '../../../core/provider/abstract/fetcher.js'
 import { BlsSeriesQueryParamsSchema, BlsSeriesDataSchema } from '../../../standard-models/bls-series.js'
 import { EmptyDataError } from '../../../core/provider/utils/errors.js'
 import { amakeRequest } from '../../../core/provider/utils/helpers.js'
+import { resolveKeyedOrigin } from '../../../core/provider/utils/hub-proxy.js'
 
 export const BLSBlsSeriesQueryParamsSchema = BlsSeriesQueryParamsSchema
 export type BLSBlsSeriesQueryParams = z.infer<typeof BLSBlsSeriesQueryParamsSchema>
 
-const BLS_API_URL = 'https://api.bls.gov/publicAPI/v2/timeseries/data/'
+const BLS_TIMESERIES_PATH = '/publicAPI/v2/timeseries/data/'
 
 interface BlsApiResponse {
   status: string
@@ -41,7 +42,8 @@ export class BLSBlsSeriesFetcher extends Fetcher {
     credentials: Record<string, string> | null,
   ): Promise<Record<string, unknown>[]> {
     const seriesIds = query.symbol.split(',').map(s => s.trim()).filter(Boolean)
-    const apiKey = credentials?.bls_api_key ?? ''
+    const { key: apiKey, origin } = resolveKeyedOrigin(
+      credentials?.bls_api_key, 'https://api.bls.gov', 'bls')
 
     const startYear = query.start_date ? query.start_date.slice(0, 4) : String(new Date().getFullYear() - 10)
     const endYear = query.end_date ? query.end_date.slice(0, 4) : String(new Date().getFullYear())
@@ -53,7 +55,7 @@ export class BLSBlsSeriesFetcher extends Fetcher {
     }
     if (apiKey) body.registrationkey = apiKey
 
-    const data = await amakeRequest<BlsApiResponse>(BLS_API_URL, {
+    const data = await amakeRequest<BlsApiResponse>(`${origin}${BLS_TIMESERIES_PATH}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

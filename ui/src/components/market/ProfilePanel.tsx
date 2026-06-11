@@ -41,7 +41,7 @@ export function ProfilePanel({ symbol }: Props) {
 
   const info = [
     provider ? `Source: ${provider}` : 'Source: (unknown)',
-    'Endpoint: /api/market-data-v1/equity/profile',
+    'Endpoint: /api/market/equity/profile',
     'Company overview: sector, industry, leadership, location, headcount.',
     'Field coverage varies by provider; blank rows are fields the source doesn\u2019t report.',
   ].join('\n')

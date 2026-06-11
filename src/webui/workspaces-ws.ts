@@ -158,11 +158,38 @@ export function attachWorkspacesWS(httpServer: HttpServer, svc: WorkspaceService
 }
 
 function isOriginAllowed(req: IncomingMessage, svc: WorkspaceService): boolean {
-  const cfg = svc.config;
+  return isWsOriginAllowed(req.headers.origin, req.headers.host, svc.config);
+}
+
+/**
+ * Origin gate for the PTY WS upgrade. Mirrors the HTTP middleware's CSRF
+ * rule (`isAllowedOrigin` in middleware/auth.ts): a same-origin request —
+ * Origin host equal to the Host the browser actually connected to — is
+ * always allowed, so direct access through any bind (LAN IP, Tailscale
+ * IP, a domain) works without configuration. A browser's Origin is not
+ * forgeable from a foreign page, so this admits exactly the pages we
+ * served ourselves. The static allowlist covers cross-origin topologies
+ * (the Vite dev port — Guardian-resolved, 5173 by default — and the future
+ * cloud demo) and stays env-extensible via WEB_TERMINAL_ALLOWED_ORIGINS.
+ */
+export function isWsOriginAllowed(
+  origin: string | undefined,
+  host: string | undefined,
+  cfg: { readonly allowAnyOrigin: boolean; readonly allowedOrigins: ReadonlySet<string> },
+): boolean {
   if (cfg.allowAnyOrigin) return true;
-  const origin = req.headers.origin;
+  // Non-browser callers (websocat, CLI tooling) send no Origin — allowed
+  // here; the auth gate still applies.
   if (typeof origin !== 'string' || origin.length === 0) return true;
-  return cfg.allowedOrigins.has(origin);
+  if (cfg.allowedOrigins.has(origin)) return true;
+  if (host) {
+    try {
+      return new URL(origin).host === host;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 function clampQuery(raw: string | null, fallback: number, lo: number, hi: number): number {

@@ -85,6 +85,41 @@ export function MarketSidebar() {
           active={isFocused('market-rotation')}
           onClick={() => openOrFocus({ kind: 'market-rotation', params: {} })}
         />
+        <SidebarRow
+          label={t('market.boardMovers')}
+          active={focusedSpec?.kind === 'market-board' && focusedSpec.params.board === 'movers'}
+          onClick={() => openOrFocus({ kind: 'market-board', params: { board: 'movers' } })}
+        />
+        <SidebarRow
+          label={t('market.boardCalendar')}
+          active={focusedSpec?.kind === 'market-board' && focusedSpec.params.board === 'calendar'}
+          onClick={() => openOrFocus({ kind: 'market-board', params: { board: 'calendar' } })}
+        />
+        <SidebarRow
+          label={t('market.boardMacro')}
+          active={focusedSpec?.kind === 'market-board' && focusedSpec.params.board === 'macro'}
+          onClick={() => openOrFocus({ kind: 'market-board', params: { board: 'macro' } })}
+        />
+        <SidebarRow
+          label={t('market.boardTermStructure')}
+          active={focusedSpec?.kind === 'market-board' && focusedSpec.params.board === 'term-structure'}
+          onClick={() => openOrFocus({ kind: 'market-board', params: { board: 'term-structure' } })}
+        />
+        <SidebarRow
+          label={t('market.boardGlobalMacro')}
+          active={focusedSpec?.kind === 'market-board' && focusedSpec.params.board === 'global-macro'}
+          onClick={() => openOrFocus({ kind: 'market-board', params: { board: 'global-macro' } })}
+        />
+        <SidebarRow
+          label={t('market.boardFed')}
+          active={focusedSpec?.kind === 'market-board' && focusedSpec.params.board === 'fed'}
+          onClick={() => openOrFocus({ kind: 'market-board', params: { board: 'fed' } })}
+        />
+        <SidebarRow
+          label={t('market.boardShipping')}
+          active={focusedSpec?.kind === 'market-board' && focusedSpec.params.board === 'shipping'}
+          onClick={() => openOrFocus({ kind: 'market-board', params: { board: 'shipping' } })}
+        />
 
         {/* Search results — only when query is non-empty */}
         {query.trim() && (

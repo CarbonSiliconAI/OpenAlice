@@ -24,6 +24,8 @@ import type { EconomyClientLike, CommodityClientLike } from '@/domain/market-dat
 const FRED_PROVIDER = 'federal_reserve'
 const EIA_PROVIDER = 'eia'
 const BLS_PROVIDER = 'bls'
+const OECD_PROVIDER = 'oecd'
+const IMF_PROVIDER = 'imf'
 
 export function createEconomyTools(
   economyClient: EconomyClientLike,
@@ -211,6 +213,245 @@ economyEnergyOutlook.`,
         if (start_date !== undefined) params.start_date = start_date
         if (end_date !== undefined) params.end_date = end_date
         return await commodityClient.getPetroleumStatus(params)
+      },
+    }),
+
+    economyCountryCpi: tool({
+      description: `Get CPI inflation for a specific country (OECD data, keyless).
+
+Returns monthly observations; with the default transform "yoy" the value is the
+year-over-year inflation rate IN PERCENT (3.81 = +3.81%). transform "period" gives
+month-over-month, "index" the raw index level.
+
+Covers ~36 countries: united_states, china, japan, germany, united_kingdom, france,
+india, brazil, south_korea, canada, australia, mexico, turkey, indonesia, and other
+OECD members (snake_case names).`,
+      inputSchema: z.object({
+        country: z.string().describe('Country slug, e.g. "united_states", "china", "japan"'),
+        transform: z.enum(['yoy', 'period', 'index']).optional().describe('Default "yoy" — year-over-year percent'),
+        start_date: z.string().optional().describe('Start date YYYY-MM-DD (optional)'),
+      }).meta({ examples: [{ country: 'china' }] }),
+      execute: async ({ country, transform, start_date }) => {
+        const params: Record<string, unknown> = { country, provider: OECD_PROVIDER, transform: transform ?? 'yoy', frequency: 'monthly' }
+        if (start_date !== undefined) params.start_date = start_date
+        return await economyClient.getCPI(params)
+      },
+    }),
+
+    economyCountryRates: tool({
+      description: `Get a country's interest rates (OECD data, keyless).
+
+duration "short" = 3-month interbank rate (the policy-rate proxy), "long" = 10-year
+government bond yield. IMPORTANT: values are DECIMAL FRACTIONS — 0.0372 means 3.72%.
+
+Same country coverage as economyCountryCpi (snake_case names).`,
+      inputSchema: z.object({
+        country: z.string().describe('Country slug, e.g. "united_states", "japan"'),
+        duration: z.enum(['short', 'long']).optional().describe('Default "short" (3M interbank); "long" = 10Y govt yield'),
+        start_date: z.string().optional().describe('Start date YYYY-MM-DD (optional)'),
+      }).meta({ examples: [{ country: 'japan', duration: 'long' }] }),
+      execute: async ({ country, duration, start_date }) => {
+        const params: Record<string, unknown> = { country, provider: OECD_PROVIDER, duration: duration ?? 'short' }
+        if (start_date !== undefined) params.start_date = start_date
+        return await economyClient.getInterestRates(params)
+      },
+    }),
+
+    economyLeadingIndicator: tool({
+      description: `Get the OECD Composite Leading Indicator (CLI) for a country or group.
+
+The CLI anticipates turning points in economic activity ~6-9 months ahead.
+100 = long-term trend; above and rising = expansion, below and falling = downturn.
+Monthly observations.
+
+country accepts a country slug ("united_states", "china") or a group ("g20", "g7").`,
+      inputSchema: z.object({
+        country: z.string().optional().describe('Country slug or group (default "g20")'),
+        start_date: z.string().optional().describe('Start date YYYY-MM-DD (optional)'),
+      }).meta({ examples: [{ country: 'united_states' }] }),
+      execute: async ({ country, start_date }) => {
+        const params: Record<string, unknown> = { provider: OECD_PROVIDER }
+        if (country !== undefined) params.country = country
+        if (start_date !== undefined) params.start_date = start_date
+        return await economyClient.getCompositeLeadingIndicator(params)
+      },
+    }),
+
+    economyPortSearch: tool({
+      description: `Search the IMF PortWatch database of 1,802 maritime ports (satellite AIS data, keyless).
+
+Returns port id, name, country, continent, coordinates and total vessel count.
+Use this to find the port id/name, then pass it to economyPortVolume for daily
+trade activity. Omit the query to list the busiest ports globally.`,
+      inputSchema: z.object({
+        port: z.string().optional().describe('Port name fragment or id, e.g. "shanghai", "rotterdam" (omit = busiest ports)'),
+      }).meta({ examples: [{ port: 'shanghai' }] }),
+      execute: async ({ port }) => {
+        const params: Record<string, unknown> = { provider: IMF_PROVIDER }
+        if (port !== undefined) params.port = port
+        return await economyClient.getPortInfo(params)
+      },
+    }),
+
+    economyPortVolume: tool({
+      description: `Daily trade activity for a maritime port (IMF PortWatch satellite AIS, keyless).
+
+Returns daily portcalls (by vessel type) and import/export trade estimates in
+METRIC TONS. Data updates weekly (Tuesdays) with a few days of lag. Use
+economyPortSearch first if unsure of the port name. Note: large harbours are
+split into sub-ports (e.g. "Shanghai (Pudong)" / "Shanghai (Yangshan)") — a
+name query matches all of them.`,
+      inputSchema: z.object({
+        port: z.string().describe('Port name fragment or id, e.g. "shanghai"'),
+        start_date: z.string().optional().describe('Start date YYYY-MM-DD'),
+        end_date: z.string().optional().describe('End date YYYY-MM-DD'),
+      }).meta({ examples: [{ port: 'rotterdam', start_date: '2026-05-01' }] }),
+      execute: async ({ port, start_date, end_date }) => {
+        const params: Record<string, unknown> = { port, provider: IMF_PROVIDER }
+        if (start_date !== undefined) params.start_date = start_date
+        if (end_date !== undefined) params.end_date = end_date
+        return await economyClient.getPortVolume(params)
+      },
+    }),
+
+    economyChokepointVolume: tool({
+      description: `Daily transit volume through maritime chokepoints (IMF PortWatch, keyless).
+
+Returns daily vessel counts (by type) and total trade volume in METRIC TONS for
+the world's 24+ chokepoints. The supply-chain narrative read: Red Sea reroutes
+show up as Suez ↓ / Cape of Good Hope ↑; drought shows as Panama ↓.
+
+Common names that match: "suez", "panama", "hormuz", "malacca", "bab el-mandeb",
+"bosporus", "gibraltar", "dover", "cape of good hope". Omit the chokepoint to
+get ALL of them (use a short date range in that case).`,
+      inputSchema: z.object({
+        chokepoint: z.string().optional().describe('Chokepoint name fragment or id, e.g. "suez" (omit = all)'),
+        start_date: z.string().optional().describe('Start date YYYY-MM-DD'),
+        end_date: z.string().optional().describe('End date YYYY-MM-DD'),
+      }).meta({ examples: [{ chokepoint: 'suez', start_date: '2026-05-01' }] }),
+      execute: async ({ chokepoint, start_date, end_date }) => {
+        const params: Record<string, unknown> = { provider: IMF_PROVIDER }
+        if (chokepoint !== undefined) params.chokepoint = chokepoint
+        if (start_date !== undefined) params.start_date = start_date
+        if (end_date !== undefined) params.end_date = end_date
+        return await economyClient.getChokepointVolume(params)
+      },
+    }),
+
+    economyCountryRetail: tool({
+      description: `Get a country's retail price index (OECD, keyless).
+
+Monthly observations of the retail price level — a demand-side read that
+complements CPI. Same country coverage as economyCountryCpi (snake_case
+names like "united_states", "japan").`,
+      inputSchema: z.object({
+        country: z.string().describe('Country slug, e.g. "united_states"'),
+        start_date: z.string().optional().describe('Start date YYYY-MM-DD (optional)'),
+      }).meta({ examples: [{ country: 'united_states' }] }),
+      execute: async ({ country, start_date }) => {
+        const params: Record<string, unknown> = { country, provider: OECD_PROVIDER }
+        if (start_date !== undefined) params.start_date = start_date
+        return await economyClient.getRetailPrices(params)
+      },
+    }),
+
+    economyCountryHousePrices: tool({
+      description: `Get a country's real house price index (OECD, keyless).
+
+Quarterly index (2015 = 100) of inflation-adjusted residential property
+prices. The property-cycle read for cross-country comparison. Same country
+coverage as economyCountryCpi (snake_case names).`,
+      inputSchema: z.object({
+        country: z.string().describe('Country slug, e.g. "united_states", "japan"'),
+        start_date: z.string().optional().describe('Start date YYYY-MM-DD (optional)'),
+      }).meta({ examples: [{ country: 'united_states' }] }),
+      execute: async ({ country, start_date }) => {
+        const params: Record<string, unknown> = { country, provider: OECD_PROVIDER }
+        if (start_date !== undefined) params.start_date = start_date
+        return await economyClient.getHousePriceIndex(params)
+      },
+    }),
+
+    economyCountrySharePrices: tool({
+      description: `Get a country's share price index (OECD, keyless).
+
+Monthly equity-market index (2015 = 100), normalized across countries —
+use for cross-country equity performance comparison rather than levels.`,
+      inputSchema: z.object({
+        country: z.string().describe('Country slug, e.g. "japan", "germany"'),
+        start_date: z.string().optional().describe('Start date YYYY-MM-DD (optional)'),
+      }).meta({ examples: [{ country: 'japan' }] }),
+      execute: async ({ country, start_date }) => {
+        const params: Record<string, unknown> = { country, provider: OECD_PROVIDER }
+        if (start_date !== undefined) params.start_date = start_date
+        return await economyClient.getSharePriceIndex(params)
+      },
+    }),
+
+    economyEuroAreaBop: tool({
+      description: `Get the euro-area balance of payments from the ECB (keyless).
+
+Quarterly current account, goods, services, primary/secondary income —
+the external-position read on the euro area. Values in EUR millions.`,
+      inputSchema: z.object({
+        start_date: z.string().optional().describe('Start date YYYY-MM-DD (optional)'),
+      }).meta({ examples: [{}] }),
+      execute: async ({ start_date }) => {
+        const params: Record<string, unknown> = { provider: 'ecb' }
+        if (start_date !== undefined) params.start_date = start_date
+        return await economyClient.getBalanceOfPayments(params)
+      },
+    }),
+
+    economyFomcDocuments: tool({
+      description: `List FOMC document links — policy statements, meeting minutes and
+projection materials — scraped from the Federal Reserve calendar (keyless).
+
+Returns {date, title, type, url} sorted newest-first. Fetch the url with your
+web tools to read the actual statement/minutes text. Statements publish on
+meeting day; minutes ~3 weeks later.`,
+      inputSchema: z.object({
+        start_date: z.string().optional().describe('Earliest meeting date YYYY-MM-DD (optional)'),
+      }).meta({ examples: [{}] }),
+      execute: async ({ start_date }) => {
+        const params: Record<string, unknown> = { provider: FRED_PROVIDER }
+        if (start_date !== undefined) params.start_date = start_date
+        return await economyClient.getFomcDocuments(params)
+      },
+    }),
+
+    economyFedBalanceSheet: tool({
+      description: `Get the Fed's balance sheet holdings (H.4.1 via FRED).
+
+Weekly observations in USD millions: Treasuries held outright, MBS, agency
+debt, and total assets. The QT/QE read — total assets shrinking = balance
+sheet runoff. Requires a FRED key.`,
+      inputSchema: z.object({
+        date: z.string().optional().describe('Pin a specific week YYYY-MM-DD (optional; default recent history)'),
+      }).meta({ examples: [{}] }),
+      execute: async ({ date }) => {
+        const params: Record<string, unknown> = { provider: FRED_PROVIDER }
+        if (date !== undefined) params.date = date
+        return await economyClient.getCentralBankHoldings(params)
+      },
+    }),
+
+    economyDealerPositioning: tool({
+      description: `Get primary dealer net positions from the NY Fed (keyless).
+
+Weekly net positions in USD millions by asset class (treasury_total,
+mbs_total, corporate_total, abs_total, agency_total) plus the summed
+total_net_position. The dealer-balance-sheet read: heavy long Treasury
+positioning = constrained intermediation capacity.`,
+      inputSchema: z.object({
+        start_date: z.string().optional().describe('Start date YYYY-MM-DD (optional)'),
+        end_date: z.string().optional().describe('End date YYYY-MM-DD (optional)'),
+      }).meta({ examples: [{ start_date: '2025-01-01' }] }),
+      execute: async ({ start_date, end_date }) => {
+        const params: Record<string, unknown> = { provider: FRED_PROVIDER }
+        if (start_date !== undefined) params.start_date = start_date
+        if (end_date !== undefined) params.end_date = end_date
+        return await economyClient.getPrimaryDealerPositioning(params)
       },
     }),
   }

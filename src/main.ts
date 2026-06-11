@@ -5,6 +5,7 @@ import { homedir } from 'os'
 // as of 0.40 — the model loop runs inside the native workspace CLIs; autonomous
 // runs go through headless workspace dispatch (cron → workspace).
 import { loadConfig } from './core/config.js'
+import { printLegacyDataNotice } from './core/legacy-data-notice.js'
 import { dataPath, defaultPath } from '@/core/paths.js'
 import type { Plugin, EngineContext } from './core/types.js'
 import { McpPlugin } from './server/mcp.js'
@@ -19,18 +20,18 @@ import { SymbolIndex } from './domain/market-data/equity/index.js'
 import { CommodityCatalog } from './domain/market-data/commodity/index.js'
 import { createEquityTools } from './tool/equity.js'
 import { createEtfTools } from './tool/etf.js'
+import { withHubCalendars } from './domain/market-data/hub-data.js'
 import { getSDKExecutor, buildRouteMap, SDKEquityClient, SDKCryptoClient, SDKCurrencyClient, SDKEtfClient, SDKIndexClient, SDKDerivativesClient, SDKCommodityClient, SDKEconomyClient } from './domain/market-data/client/typebb/index.js'
 import type { EquityClientLike, CryptoClientLike, CurrencyClientLike, EtfClientLike, IndexClientLike, DerivativesClientLike, CommodityClientLike, EconomyClientLike } from './domain/market-data/client/types.js'
 import { buildSDKCredentials } from './domain/market-data/credential-map.js'
-import { OpenBBEquityClient } from './domain/market-data/client/openbb-api/equity-client.js'
-import { OpenBBCryptoClient } from './domain/market-data/client/openbb-api/crypto-client.js'
-import { OpenBBCurrencyClient } from './domain/market-data/client/openbb-api/currency-client.js'
-import { OpenBBCommodityClient } from './domain/market-data/client/openbb-api/commodity-client.js'
-import { OpenBBEconomyClient } from './domain/market-data/client/openbb-api/economy-client.js'
 import { createMarketSearchTools } from './tool/market.js'
 import { createQuantTools } from './tool/quant.js'
 import { createBarService } from './domain/market-data/bars/index.js'
+import { createReferenceData } from './domain/market-data/reference/service.js'
 import { createSectorRotationTools } from './tool/sector-rotation.js'
+import { createReferenceBoardTools } from './tool/reference-board.js'
+import { createDerivativesTools } from './tool/derivatives.js'
+import { createIndexTools } from './tool/indices.js'
 import { createEconomyTools } from './tool/economy.js'
 import { SessionStore } from './core/session.js'
 import { createInboxStore } from './core/inbox-store.js'
@@ -69,6 +70,11 @@ async function readWithDefault(target: string, defaultFile: string): Promise<str
 }
 
 async function main() {
+  // Before migrations create the new config dir: if this checkout carries a
+  // pre-global-root data/ store, tell the user how to adopt it (covers bare
+  // `pnpm start`; guardian children get OPENALICE_HOME so this stays quiet).
+  printLegacyDataNotice('[alice]')
+
   const config = await loadConfig()
 
   // ==================== Event Log ====================
@@ -137,23 +143,15 @@ async function main() {
   let cryptoClient: CryptoClientLike
   let currencyClient: CurrencyClientLike
   let commodityClient: CommodityClientLike
-  let etfClient: EtfClientLike | undefined
-  let indexClient: IndexClientLike | undefined
-  let derivativesClient: DerivativesClientLike | undefined
+  let etfClient: EtfClientLike
+  let indexClient: IndexClientLike
+  let derivativesClient: DerivativesClientLike
   let economyClient: EconomyClientLike
 
-  if (config.marketData.backend === 'openbb-api') {
-    const url = config.marketData.apiUrl
-    const keys = config.marketData.providerKeys
-    equityClient = new OpenBBEquityClient(url, providers.equity, keys)
-    cryptoClient = new OpenBBCryptoClient(url, providers.crypto, keys)
-    currencyClient = new OpenBBCurrencyClient(url, providers.currency, keys)
-    commodityClient = new OpenBBCommodityClient(url, providers.commodity, keys) as unknown as CommodityClientLike
-    economyClient = new OpenBBEconomyClient(url, 'federal_reserve', keys) as unknown as EconomyClientLike
-  } else {
+  {
     const executor = getSDKExecutor()
     const routeMap = buildRouteMap()
-    const credentials = buildSDKCredentials(config.marketData.providerKeys)
+    const credentials = buildSDKCredentials(config.marketData.providerKeys, config.marketData.hub)
     equityClient = new SDKEquityClient(executor, 'equity', providers.equity, credentials, routeMap)
     cryptoClient = new SDKCryptoClient(executor, 'crypto', providers.crypto, credentials, routeMap)
     currencyClient = new SDKCurrencyClient(executor, 'currency', providers.currency, credentials, routeMap)
@@ -186,6 +184,21 @@ async function main() {
     vendorProviders: config.marketData.providers,
   })
 
+  // Hub-first calendars: tools, CLI and boards all inherit through the
+  // client seam. No-op when the hub is disabled.
+  equityClient = withHubCalendars(equityClient, config.marketData.hub)
+
+  // Reference-data contract — board-shaped low-frequency data (movers, macro,
+  // calendar, …). Alice's own standard; the future hosted-hub seam.
+  const reference = createReferenceData({
+    equityClient,
+    economyClient,
+    derivativesClient,
+    indexClient,
+    equityProvider: config.marketData.providers.equity,
+    hub: config.marketData.hub,
+  })
+
   // ==================== Tool Registration ====================
 
   toolCenter.register(createThinkingTools(), 'thinking')
@@ -198,18 +211,25 @@ async function main() {
 
   toolCenter.register(createCronTools(cronEngine), 'cron')
   toolCenter.register(createMarketSearchTools(marketSearch), 'market-search')
+  toolCenter.register(createReferenceBoardTools(reference), 'market-board')
   toolCenter.register(createEquityTools(equityClient), 'equity')
   if (etfClient) {
     toolCenter.register(createEtfTools(etfClient), 'etf')
   }
   if (config.news.enabled) {
-    toolCenter.register(createNewsArchiveTools(newsStore), 'news')
+    toolCenter.register(createNewsArchiveTools(newsStore), 'rss')
   }
   // v1 calculateIndicator (createAnalysisTools) is retired from the tool surface
   // — calculateQuant (v2, barId-keyed) supersedes it and the two descriptions
   // confused the model / bloated context. The code remains for now.
   toolCenter.register(createQuantTools({ barService }), 'quant')
-  toolCenter.register(createSectorRotationTools(equityClient), 'sector-rotation')
+  toolCenter.register(createSectorRotationTools(equityClient, config.marketData.hub), 'sector-rotation')
+  if (derivativesClient) {
+    toolCenter.register(createDerivativesTools(derivativesClient), 'derivatives')
+  }
+  if (indexClient) {
+    toolCenter.register(createIndexTools(indexClient), 'indices')
+  }
   toolCenter.register(createEconomyTools(economyClient, commodityClient), 'economy')
 
   // Signal-pipeline read-only bridge: env override, else default to ~/Projects/signal-pipeline/signals
@@ -315,6 +335,7 @@ async function main() {
     marketSearch,
     equityClient,
     barService,
+    reference,
     utaManager,
     newsProvider: newsStore,
   }

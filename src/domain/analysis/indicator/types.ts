@@ -31,7 +31,7 @@ export interface DataSourceMeta {
   sourceId?: string
   /** "{sourceId}|{nativeSymbol}" — 操作命名空间的唯一句柄。 */
   barId?: string
-  /** vendor 路径报请求 provider;openbb-api 路径报响应 provider。 */
+  /** vendor 路径报的是请求 provider(SDK 执行器不回传响应 provider)。 */
   provider?: string
   /** 数据档位:free|delayed|subscription|iex|realtime。 */
   barCapability?: 'free' | 'delayed' | 'subscription' | 'iex' | 'realtime'

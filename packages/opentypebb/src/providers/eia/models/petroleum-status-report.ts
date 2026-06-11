@@ -9,11 +9,12 @@ import { Fetcher } from '../../../core/provider/abstract/fetcher.js'
 import { PetroleumStatusReportQueryParamsSchema, PetroleumStatusReportDataSchema } from '../../../standard-models/petroleum-status-report.js'
 import { EmptyDataError } from '../../../core/provider/utils/errors.js'
 import { amakeRequest } from '../../../core/provider/utils/helpers.js'
+import { resolveKeyedOrigin } from '../../../core/provider/utils/hub-proxy.js'
 
 export const EIAPetroleumStatusReportQueryParamsSchema = PetroleumStatusReportQueryParamsSchema
 export type EIAPetroleumStatusReportQueryParams = z.infer<typeof EIAPetroleumStatusReportQueryParamsSchema>
 
-const EIA_API_URL = 'https://api.eia.gov/v2/petroleum/sum/sndw/data/'
+const EIA_PETROLEUM_PATH = '/v2/petroleum/sum/sndw/data'
 
 // Map categories to EIA series IDs
 const CATEGORY_SERIES: Record<string, { series: string; unit: string }> = {
@@ -46,7 +47,8 @@ export class EIAPetroleumStatusReportFetcher extends Fetcher {
     query: EIAPetroleumStatusReportQueryParams,
     credentials: Record<string, string> | null,
   ): Promise<Record<string, unknown>[]> {
-    const apiKey = credentials?.eia_api_key ?? credentials?.api_key ?? ''
+    const { key: apiKey, origin } = resolveKeyedOrigin(
+      credentials?.eia_api_key ?? credentials?.api_key, 'https://api.eia.gov', 'eia')
     const catInfo = CATEGORY_SERIES[query.category]
     if (!catInfo) throw new EmptyDataError(`Unknown category: ${query.category}`)
 
@@ -54,7 +56,6 @@ export class EIAPetroleumStatusReportFetcher extends Fetcher {
     // see https://www.eia.gov/opendata/documentation.php. The JSON form
     // is silently rejected with HTTP 403 on most endpoints.
     const params = new URLSearchParams({
-      api_key: apiKey,
       frequency: 'weekly',
       'data[0]': 'value',
       'facets[series][]': catInfo.series,
@@ -65,8 +66,9 @@ export class EIAPetroleumStatusReportFetcher extends Fetcher {
 
     if (query.start_date) params.set('start', query.start_date)
     if (query.end_date) params.set('end', query.end_date)
+    if (apiKey) params.set('api_key', apiKey)
 
-    const url = `${EIA_API_URL}?${params.toString()}`
+    const url = `${origin}${EIA_PETROLEUM_PATH}?${params.toString()}`
     const data = await amakeRequest<EiaResponse>(url)
 
     const results: Record<string, unknown>[] = []

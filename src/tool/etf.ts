@@ -6,9 +6,12 @@
  *   self-serve thematic ETFs — find a theme's ETF, then read whether the
  *   theme actually attracted capital (the reflexivity read; see etfGetInfo).
  *
- * Provider note: ETF search/holdings/sectors are FMP-only; ETF info is served
- * by yfinance (keyless) which also carries the reflexivity fields
- * (total_assets / category / inception_date / volume_avg).
+ * Provider note: ETF search is FMP-only; ETF info is served by yfinance
+ * (keyless) which also carries the reflexivity fields (total_assets /
+ * category / inception_date / volume_avg). Holdings/sectors prefer FMP
+ * (full holdings list) and FALL BACK to yfinance keylessly — top-10
+ * holdings + full sector weights via quoteSummary — so an FMP outage or
+ * missing key degrades instead of going dark.
  */
 
 import { tool } from 'ai'
@@ -80,7 +83,13 @@ If unsure of the ticker, use etfSearch first.`,
         symbol: z.string().describe('ETF ticker, e.g. "XLK", "SMH"'),
       }).meta({ examples: [{ symbol: 'XLK' }] }),
       execute: async ({ symbol }) => {
-        return await etfClient.getHoldings({ symbol, provider: 'fmp' })
+        // FMP carries the full holdings list; Yahoo only the top 10 —
+        // still enough for the concentration read when FMP is down/keyless.
+        try {
+          return await etfClient.getHoldings({ symbol, provider: 'fmp' })
+        } catch {
+          return await etfClient.getHoldings({ symbol, provider: 'yfinance' })
+        }
       },
     }),
 
@@ -96,7 +105,11 @@ If unsure of the ticker, use etfSearch first.`,
         symbol: z.string().describe('ETF ticker, e.g. "XLK", "SMH"'),
       }).meta({ examples: [{ symbol: 'XLK' }] }),
       execute: async ({ symbol }) => {
-        return await etfClient.getSectors({ symbol, provider: 'fmp' })
+        try {
+          return await etfClient.getSectors({ symbol, provider: 'fmp' })
+        } catch {
+          return await etfClient.getSectors({ symbol, provider: 'yfinance' })
+        }
       },
     }),
   }

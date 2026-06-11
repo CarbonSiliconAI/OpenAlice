@@ -61,8 +61,8 @@ const MCP_JSON_INBOX_ONLY = `{
 /** Launcher-level option: where the agent reaches Alice's data tools. */
 export type ToolAccess = 'mcp' | 'cli';
 
-/** The launcher-level skill teaching the `alice` CLI; added in CLI mode. */
-const CLI_TOOLS_SKILL = 'openalice-cli';
+/** Launcher-level skills teaching the CLIs (`alice*` + `traderhub`); added in CLI mode. */
+const CLI_TOOLS_SKILLS = ['openalice-cli', 'traderhub'];
 
 /**
  * Resolve a template's injection config against the launcher-level `toolAccess`
@@ -75,10 +75,8 @@ const CLI_TOOLS_SKILL = 'openalice-cli';
 export function resolveInjection(template: TemplateMeta, toolAccess: ToolAccess): TemplateMeta {
   if (template.injectMcp !== true) return template;
   if (toolAccess !== 'cli') return template;
-  const bundledSkills = template.bundledSkills.includes(CLI_TOOLS_SKILL)
-    ? template.bundledSkills
-    : [...template.bundledSkills, CLI_TOOLS_SKILL];
-  return { ...template, injectMcp: 'inbox', bundledSkills };
+  const missing = CLI_TOOLS_SKILLS.filter((skill) => !template.bundledSkills.includes(skill));
+  return { ...template, injectMcp: 'inbox', bundledSkills: [...template.bundledSkills, ...missing] };
 }
 
 export async function injectWorkspaceContext(opts: {

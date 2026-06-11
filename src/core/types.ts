@@ -4,6 +4,7 @@ import type { INewsProvider } from '../domain/news/types.js'
 import type { MarketSearchDeps } from '../domain/market-data/aggregate-search.js'
 import type { EquityClientLike } from '../domain/market-data/client/types.js'
 import type { BarService } from '../domain/market-data/bars/index.js'
+import type { ReferenceDataService } from '../domain/market-data/reference/types.js'
 import type { CronEngine } from '../task/cron/engine.js'
 import type { Config, WebChannel } from './config.js'
 import type { EventLog } from './event-log.js'
@@ -63,6 +64,10 @@ export interface EngineContext {
    *  OHLCV behind one barId-keyed interface. Consumed by the analysis tools and
    *  (Phase 3) the /api/bars chart route. */
   barService: BarService
+  /** Reference-data contract (low-frequency boards: movers, macro, calendar,
+   *  …). OpenAlice's own standard replacing the OpenBB-compatible
+   *  passthrough; the future hosted-hub seam. Served at /api/reference. */
+  reference: ReferenceDataService
 
   // Trading — HTTP-backed SDK that talks to the co-located UTA service.
   // FxService and SnapshotService live entirely inside UTA after Step 6;

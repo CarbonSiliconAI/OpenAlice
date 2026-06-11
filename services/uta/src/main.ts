@@ -28,7 +28,6 @@ import {
 } from '@/domain/market-data/client/typebb/index.js'
 import type { CurrencyClientLike } from '@/domain/market-data/client/types.js'
 import { buildSDKCredentials } from '@/domain/market-data/credential-map.js'
-import { OpenBBCurrencyClient } from '@/domain/market-data/client/openbb-api/currency-client.js'
 import { createTradingRoutes } from './http/routes-trading.js'
 import { createSimulatorRoutes } from './http/routes-simulator.js'
 import type { UTAEngineContext } from './types.js'
@@ -92,20 +91,11 @@ async function main(): Promise<void> {
   // /api/trading/equity. The other market-data clients stay in Alice.
 
   const { providers } = config.marketData
-  let currencyClient: CurrencyClientLike
-  if (config.marketData.backend === 'openbb-api') {
-    currencyClient = new OpenBBCurrencyClient(
-      config.marketData.apiUrl,
-      providers.currency,
-      config.marketData.providerKeys,
-    )
-  } else {
-    const executor = getSDKExecutor()
-    const routeMap = buildRouteMap()
-    const credentials = buildSDKCredentials(config.marketData.providerKeys)
-    currencyClient = new SDKCurrencyClient(executor, 'currency', providers.currency, credentials, routeMap)
-  }
-  const fxService = new FxService(currencyClient)
+  const executor = getSDKExecutor()
+  const routeMap = buildRouteMap()
+  const credentials = buildSDKCredentials(config.marketData.providerKeys)
+  const currencyClient: CurrencyClientLike = new SDKCurrencyClient(executor, 'currency', providers.currency, credentials, routeMap)
+  const fxService = new FxService(currencyClient, undefined, config.marketData.hub)
   utaManager.setFxService(fxService)
 
   // ==================== Snapshots ====================

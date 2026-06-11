@@ -116,7 +116,7 @@ function FeedsSection({
       title="RSS Feeds"
       description={
         feeds.length > 0
-          ? `${activeCount} of ${feeds.length} feed${feeds.length > 1 ? 's' : ''} active. Toggle off to pause fetching without removing. Articles are searchable via globNews, grepNews, and readNews tools.`
+          ? `${activeCount} of ${feeds.length} feed${feeds.length > 1 ? 's' : ''} active. Toggle off to pause fetching without removing. Articles are searchable via globRss, grepRss, and readRss tools.`
           : 'No feeds configured yet. Add feeds to start collecting articles.'
       }
     >

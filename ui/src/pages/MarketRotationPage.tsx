@@ -5,6 +5,7 @@ import {
   ScatterChart, Scatter, Cell, LabelList, ReferenceLine,
   XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
+import { BoardMeta } from '../components/market/BoardMeta'
 import { PageHeader } from '../components/PageHeader'
 import { marketApi, type SectorRotationResult, type SectorRotationRow } from '../api/market'
 
@@ -81,7 +82,7 @@ export function MarketRotationPage() {
         description={
           <>
             {t('market.rotationSubtitle')}
-            {data && <span className="text-text-muted/50"> · {t('market.asOf')} {data.asOf}</span>}
+            {data && <><span className="text-text-muted/50"> · {t('market.asOf')} {data.asOf}</span>{data.meta && <BoardMeta meta={data.meta} />}</>}
           </>
         }
         live={{ lastUpdated: updatedAt }}

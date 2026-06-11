@@ -2,8 +2,8 @@
  * Shipping Sub-Router.
  * Maps to: openbb_economy/shipping/
  *
- * Note: These endpoints are stubs — they register the routes but always
- * throw EmptyDataError until a reliable public data source is integrated.
+ * Backed by the IMF PortWatch provider (provider=imf) — satellite AIS data
+ * for 1,802 ports and 24 chokepoints, public ArcGIS layers, keyless.
  */
 
 import { Router } from '../../../core/app/router.js'

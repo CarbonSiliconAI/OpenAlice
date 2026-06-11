@@ -16,8 +16,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactElement } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import { TAG_HINT, useCreateWorkspace } from '../../hooks/useCreateWorkspace'
+import { TAG_HINT, defaultTagFor, useCreateWorkspace } from '../../hooks/useCreateWorkspace'
+import { useWorkspaces } from '../../contexts/WorkspacesContext'
 import type { AgentInfo, TemplateInfo, Workspace } from './api'
 
 export interface CreateWorkspaceFormProps {
@@ -48,6 +50,8 @@ const LABEL = 'block text-[11px] uppercase tracking-wider text-text-muted/70'
 const HINT = 'text-[11px] text-text-muted/70'
 
 export function CreateWorkspaceForm(props: CreateWorkspaceFormProps): ReactElement {
+  const { t } = useTranslation()
+  const { workspaces } = useWorkspaces()
   const { templates, agents, presetTemplate, initialTag, onCancel, autoFocusTag } = props
 
   // Template selection. Fixed when `presetTemplate` is set; otherwise the
@@ -71,7 +75,19 @@ export function CreateWorkspaceForm(props: CreateWorkspaceFormProps): ReactEleme
     onCreated: props.onCreated,
   })
 
-  // Seed the default tag + focus, once, on mount.
+  // Tag auto-derivation: `<template>-<date>[-n]`, recomputed when the
+  // template changes — until the user types into the field, which makes
+  // their text authoritative (we never fight manual input).
+  const tagTouched = useRef(false)
+  useEffect(() => {
+    if (tagTouched.current) return
+    if (initialTag) return // explicit seed wins (and is set below, once)
+    if (!effectiveTemplate) return
+    create.setTag(defaultTagFor(effectiveTemplate, workspaces))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveTemplate, workspaces, initialTag])
+
+  // Seed the explicit tag + focus, once, on mount.
   const tagRef = useRef<HTMLInputElement | null>(null)
   useEffect(() => {
     if (initialTag) create.setTag(initialTag)
@@ -99,7 +115,7 @@ export function CreateWorkspaceForm(props: CreateWorkspaceFormProps): ReactEleme
       {showTemplateSelect && (
         <div className="space-y-1.5">
           <label htmlFor="cw-template" className={LABEL}>
-            Template
+            {t('createWorkspace.templateLabel')}
           </label>
           <select
             id="cw-template"
@@ -108,9 +124,10 @@ export function CreateWorkspaceForm(props: CreateWorkspaceFormProps): ReactEleme
             disabled={create.creating}
             className={FIELD}
           >
-            {templates.map((t) => (
-              <option key={t.name} value={t.name}>
-                {t.displayName ?? t.name}
+            {templates.map((tpl) => (
+              <option key={tpl.name} value={tpl.name}>
+                {tpl.displayName ?? tpl.name}
+                {tpl.community ? t('createWorkspace.communitySuffix') : ''}
               </option>
             ))}
           </select>
@@ -120,7 +137,7 @@ export function CreateWorkspaceForm(props: CreateWorkspaceFormProps): ReactEleme
 
       <div className="space-y-1.5">
         <label htmlFor="cw-tag" className={LABEL}>
-          Tag
+          {t('createWorkspace.tagLabel')}
         </label>
         <input
           id="cw-tag"
@@ -128,7 +145,10 @@ export function CreateWorkspaceForm(props: CreateWorkspaceFormProps): ReactEleme
           type="text"
           placeholder="e.g. may1"
           value={create.tag}
-          onChange={(e) => create.setTag(e.target.value)}
+          onChange={(e) => {
+            tagTouched.current = true
+            create.setTag(e.target.value)
+          }}
           disabled={create.creating}
           spellCheck={false}
           autoCorrect="off"
@@ -140,7 +160,7 @@ export function CreateWorkspaceForm(props: CreateWorkspaceFormProps): ReactEleme
 
       <div className="space-y-1.5">
         <label htmlFor="cw-tools" className={LABEL}>
-          Tools
+          {t('createWorkspace.toolsLabel')}
         </label>
         <select
           id="cw-tools"
@@ -149,12 +169,10 @@ export function CreateWorkspaceForm(props: CreateWorkspaceFormProps): ReactEleme
           disabled={create.creating}
           className={FIELD}
         >
-          <option value="mcp">MCP — data tools as MCP servers (default)</option>
-          <option value="cli">CLI — data tools via the `alice` command on PATH</option>
+          <option value="cli">{t('createWorkspace.toolsCli')}</option>
+          <option value="mcp">{t('createWorkspace.toolsMcp')}</option>
         </select>
-        <p className={HINT}>
-          How the agent reaches Alice&apos;s data tools. Applies to tool-injecting workspaces.
-        </p>
+        <p className={HINT}>{t('createWorkspace.toolsHint')}</p>
       </div>
 
       {create.error && <div className="text-[12px] text-red">{create.error}</div>}
@@ -167,7 +185,7 @@ export function CreateWorkspaceForm(props: CreateWorkspaceFormProps): ReactEleme
             disabled={create.creating}
             className="px-3 py-2 text-[13px] rounded text-text-muted hover:text-text hover:bg-bg-secondary"
           >
-            Cancel
+            {t('createWorkspace.cancel')}
           </button>
         )}
         <button
@@ -175,7 +193,7 @@ export function CreateWorkspaceForm(props: CreateWorkspaceFormProps): ReactEleme
           disabled={create.creating || create.tag.length === 0 || effectiveTemplate === ''}
           className="btn-primary"
         >
-          {create.creating ? 'Creating…' : (props.submitLabel ?? 'Create workspace')}
+          {create.creating ? t('createWorkspace.creating') : (props.submitLabel ?? t('createWorkspace.create'))}
         </button>
       </div>
     </form>

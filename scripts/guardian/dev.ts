@@ -15,9 +15,13 @@
  */
 
 import { resolve } from 'node:path'
+import { homedir } from 'node:os'
+import { existsSync } from 'node:fs'
 import type { ChildProcess } from 'node:child_process'
 import {
-  probePorts,
+  readPortsFile,
+  resolvePortConfig,
+  planPorts,
   spawnChild,
   waitForHttp,
   installCascadeShutdown,
@@ -27,22 +31,46 @@ import {
 } from './shared.js'
 
 async function main(): Promise<void> {
-  const ports = await probePorts()
-  const dataHome = process.cwd()
+  // One global store by default (~/.openalice) — shared with the packaged
+  // app. `OPENALICE_HOME=$PWD pnpm dev` pins a checkout-local store for
+  // experiments that shouldn't touch real data.
+  const dataHome = process.env['OPENALICE_HOME'] ?? resolve(homedir(), '.openalice')
+
+  // Legacy adoption notice: this checkout has a pre-global-root data/ store
+  // and the global one is still virgin. Never auto-move — multiple worktrees
+  // may each carry a ./data and only the user knows which is canonical.
+  if (
+    !process.env['OPENALICE_HOME'] &&
+    existsSync(resolve(process.cwd(), 'data', 'config')) &&
+    !existsSync(resolve(dataHome, 'data', 'config'))
+  ) {
+    console.warn('[guardian] ──────────────────────────────────────────────────────')
+    console.warn(`[guardian] Found existing data/ in this checkout (${resolve(process.cwd(), 'data')}).`)
+    console.warn(`[guardian] OpenAlice now stores user data in ${dataHome}/data.`)
+    console.warn(`[guardian] To adopt this checkout's data, stop the stack and run:`)
+    console.warn(`[guardian]   mv "$PWD/data" "${dataHome}/data"`)
+    console.warn('[guardian] Continuing with a fresh store. (Old behavior: OPENALICE_HOME="$PWD" pnpm dev)')
+    console.warn('[guardian] ──────────────────────────────────────────────────────')
+  }
+
+  // env (OPENALICE_*_PORT) > data/config/ports.json > default+probe.
+  const ports = await planPorts(resolvePortConfig(process.env, await readPortsFile(dataHome)))
   const flagPath = resolve(dataHome, 'data/control/restart-uta.flag')
 
   console.log('')
   console.log(`[guardian] UTA      →  http://127.0.0.1:${ports.utaPort}`)
   console.log(`[guardian] Alice    →  http://localhost:${ports.webPort}`)
   console.log(`[guardian] MCP      →  http://localhost:${ports.mcpPort}/mcp`)
-  console.log(`[guardian] UI       →  http://localhost:5173  (Vite picks +1 if taken)`)
+  console.log(`[guardian] UI       →  http://localhost:${ports.uiPort}`)
   console.log(`[guardian] flag     →  ${flagPath}`)
   console.log('')
 
   const baseEnv = {
     ...process.env,
     NODE_OPTIONS: `${process.env['NODE_OPTIONS'] ?? ''} --conditions=openalice-source`.trim(),
-    OPENALICE_USER_DATA_HOME: dataHome,
+    // Children must resolve the same user-data root the Guardian watches —
+    // src/core/paths.ts reads OPENALICE_HOME; never rely on cwd inheritance.
+    OPENALICE_HOME: dataHome,
   }
 
   // ── UTA spec (re-used by Guardian for restart) ────────────
@@ -74,6 +102,9 @@ async function main(): Promise<void> {
       ...baseEnv,
       OPENALICE_WEB_PORT: String(ports.webPort),
       OPENALICE_MCP_PORT: String(ports.mcpPort),
+      // Where the UI actually lives — consumed by the workspace WS-origin
+      // allowlist (src/workspaces/config.ts buildDefaultOrigins).
+      OPENALICE_UI_PORT: String(ports.uiPort),
       OPENALICE_UTA_URL: utaUrl,
     },
     prefixLogs: true,
@@ -84,7 +115,12 @@ async function main(): Promise<void> {
     name: 'vite',
     command: 'pnpm',
     args: ['--filter', 'open-alice-ui', 'dev'],
-    env: { ...baseEnv, OPENALICE_BACKEND_PORT: String(ports.webPort) },
+    env: {
+      ...baseEnv,
+      OPENALICE_BACKEND_PORT: String(ports.webPort),
+      // Guardian is the port authority: Vite binds exactly this (strictPort).
+      OPENALICE_UI_PORT: String(ports.uiPort),
+    },
     prefixLogs: true,
   })
 

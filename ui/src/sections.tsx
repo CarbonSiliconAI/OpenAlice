@@ -30,10 +30,9 @@ import { DevCategoryList } from './components/DevCategoryList'
 import { MarketSidebar } from './components/MarketSidebar'
 import { PortfolioSidebar } from './components/PortfolioSidebar'
 import { AutomationSidebar } from './components/AutomationSidebar'
-import { NewsSidebar } from './components/NewsSidebar'
 import type { ActivitySection } from './tabs/types'
 
-type NavTitleKey = 'nav.item.chat' | 'nav.item.inbox' | 'nav.item.tracked' | 'nav.item.workspaces' | 'nav.item.tradingAsGit' | 'nav.item.settings' | 'nav.item.dev' | 'nav.item.market' | 'nav.item.portfolio' | 'nav.item.automation' | 'nav.item.news'
+type NavTitleKey = 'nav.item.chat' | 'nav.item.inbox' | 'nav.item.tracked' | 'nav.item.workspaces' | 'nav.item.tradingAsGit' | 'nav.item.settings' | 'nav.item.dev' | 'nav.item.market' | 'nav.item.portfolio' | 'nav.item.automation'
 
 export interface SidebarSection {
   /** Header title shown at the top of the sidebar. */
@@ -44,7 +43,12 @@ export interface SidebarSection {
   Actions?: ComponentType
 }
 
-const SECTION_BY_KEY: Record<ActivitySection, SidebarSection> = {
+/**
+ * Activities WITHOUT an entry here are sidebar-less: clicking them in the
+ * ActivityBar opens their default tab full-width, no secondary column.
+ * (News is the first — its sidebar was a single-row placeholder.)
+ */
+const SECTION_BY_KEY: Partial<Record<ActivitySection, SidebarSection>> = {
   // Chat is the workspace-chat shortcut now — the "夺舍" of the Chat
   // shortcut by chat-template workspaces. Channel creation is no longer
   // an Action here; that affordance moved to traditional-chat.
@@ -88,10 +92,6 @@ const SECTION_BY_KEY: Record<ActivitySection, SidebarSection> = {
     titleKey: 'nav.item.automation',
     Secondary: AutomationSidebar,
   },
-  news: {
-    titleKey: 'nav.item.news',
-    Secondary: NewsSidebar,
-  },
 }
 
 /** Resolve the sidebar config for the currently selected ActivitySection. */
@@ -99,5 +99,5 @@ export function findSectionForActivity(
   section: ActivitySection | null | undefined,
 ): SidebarSection | null {
   if (!section) return null
-  return SECTION_BY_KEY[section]
+  return SECTION_BY_KEY[section] ?? null
 }

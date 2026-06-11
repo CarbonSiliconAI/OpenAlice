@@ -9,7 +9,7 @@
  * round-trip. It reveals nothing beyond `{ authed: boolean }`.
  */
 
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { setCookie, deleteCookie } from 'hono/cookie'
 import { z } from 'zod'
 import {
@@ -19,7 +19,12 @@ import {
   validateAndTouch,
   getTokenInfo,
 } from '@/services/auth/index.js'
-import { SESSION_COOKIE_NAME, isLoopbackIp } from '../middleware/auth.js'
+import {
+  SESSION_COOKIE_NAME,
+  isLoopbackIp,
+  normalizeIp,
+  getSocketRemoteAddress,
+} from '../middleware/auth.js'
 
 const loginSchema = z.object({
   token: z.string().min(1, 'token is required'),
@@ -27,13 +32,22 @@ const loginSchema = z.object({
 
 export interface AuthRouteOptions {
   /** Should `Set-Cookie` mark the session cookie `Secure`? Set true in
-   *  prod (HTTPS behind reverse proxy). Auto-detected from headers when
-   *  not provided. */
+   *  prod (HTTPS behind reverse proxy). Auto-detected from
+   *  X-Forwarded-Proto when not provided — but only for requests
+   *  arriving from a trusted proxy. */
   forceSecureCookie?: boolean
+  /** Trusted reverse-proxy IPs. X-Forwarded-* headers are honored only
+   *  when the request's socket peer is one of these — otherwise any
+   *  client could send `X-Forwarded-Proto: https` over plain HTTP and
+   *  coerce a `Secure` cookie the browser would then silently drop
+   *  (login appears broken). Same list as the middleware's
+   *  `trustedProxies`. */
+  trustedProxies?: string[]
 }
 
 export function createAuthRoutes(opts: AuthRouteOptions = {}) {
   const app = new Hono()
+  const trustedProxies = new Set((opts.trustedProxies ?? []).map(normalizeIp))
 
   /**
    * Returns whether the current request is authenticated, plus minimal
@@ -47,11 +61,8 @@ export function createAuthRoutes(opts: AuthRouteOptions = {}) {
     // loopback socket, report authed:true even without a cookie. This
     // keeps `pnpm dev` zero-friction — the UI never bounces to the
     // login page in single-user local mode.
-    const trustedProxies = (process.env['OPENALICE_TRUSTED_PROXIES'] ?? '')
-      .split(',').map((s) => s.trim()).filter(Boolean)
-    if (trustedProxies.length === 0) {
-      const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined
-      const remote = env?.incoming?.socket?.remoteAddress ?? ''
+    if (trustedProxies.size === 0) {
+      const remote = getSocketRemoteAddress(c) ?? ''
       if (isLoopbackIp(remote)) {
         return c.json({ authed: true, tokenConfigured: tokenInfo.exists, passthrough: 'localhost' })
       }
@@ -96,11 +107,12 @@ export function createAuthRoutes(opts: AuthRouteOptions = {}) {
       return c.json({ error: 'Invalid token' }, 401)
     }
 
+    const fromTrustedProxy = isTrustedProxyPeer(c, trustedProxies)
     const userAgent = c.req.header('user-agent') ?? undefined
-    const ip = readClientIp(c) ?? undefined
+    const ip = readClientIp(c, fromTrustedProxy) ?? undefined
     const session = await createSession({ userAgent, ip })
 
-    const secure = opts.forceSecureCookie ?? isLikelyHttps(c)
+    const secure = opts.forceSecureCookie ?? (fromTrustedProxy && isForwardedHttps(c))
     setCookie(c, SESSION_COOKIE_NAME, session.sid, {
       httpOnly: true,
       sameSite: 'Lax',
@@ -140,26 +152,30 @@ function readSidFromCookie(cookieHeader: string): string | null {
   return null
 }
 
-/**
- * Best-effort: detect whether the original client request was HTTPS,
- * so the `Secure` flag can be set on the cookie. Reverse proxies set
- * `X-Forwarded-Proto`; we only trust it if a proxy IP is configured to
- * be trusted — otherwise an attacker could send `X-Forwarded-Proto: https`
- * to coerce `Secure` to be set on an HTTP cookie that the browser
- * would then drop.
- */
-function isLikelyHttps(c: { req: { header: (n: string) => string | undefined }; env?: unknown }): boolean {
-  const proto = c.req.header('x-forwarded-proto')
-  if (proto?.split(',')[0]?.trim().toLowerCase() === 'https') return true
-  return false
+/** True when the request's socket peer is one of the trusted proxy IPs. */
+function isTrustedProxyPeer(c: Context, trustedProxies: ReadonlySet<string>): boolean {
+  if (trustedProxies.size === 0) return false
+  const remote = getSocketRemoteAddress(c)
+  return remote ? trustedProxies.has(normalizeIp(remote)) : false
 }
 
-function readClientIp(c: { req: { header: (n: string) => string | undefined }; env?: unknown }): string | null {
-  const xff = c.req.header('x-forwarded-for')
-  if (xff) {
-    const first = xff.split(',')[0]?.trim()
+/**
+ * Whether the trusted proxy says the original client request was HTTPS.
+ * Only call after `isTrustedProxyPeer` — from any other peer the header
+ * is attacker-controlled (see AuthRouteOptions.trustedProxies). Without
+ * a proxy in front there is no TLS terminator, the connection is plain
+ * HTTP, and `Secure` must not be set.
+ */
+function isForwardedHttps(c: Context): boolean {
+  const proto = c.req.header('x-forwarded-proto')
+  return proto?.split(',')[0]?.trim().toLowerCase() === 'https'
+}
+
+function readClientIp(c: Context, fromTrustedProxy: boolean): string | null {
+  if (fromTrustedProxy) {
+    const xff = c.req.header('x-forwarded-for')
+    const first = xff?.split(',')[0]?.trim()
     if (first) return first
   }
-  const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined
-  return env?.incoming?.socket?.remoteAddress ?? null
+  return getSocketRemoteAddress(c) ?? null
 }

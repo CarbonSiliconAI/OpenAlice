@@ -8,6 +8,7 @@
  */
 
 import type { ReactElement } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '../uta/Dialog'
 import { CreateWorkspaceForm } from './CreateWorkspaceForm'
@@ -25,12 +26,13 @@ export interface CreateWorkspaceDialogProps {
 }
 
 export function CreateWorkspaceDialog(props: CreateWorkspaceDialogProps): ReactElement {
+  const { t } = useTranslation()
   return (
     <Dialog onClose={props.onClose} width="w-[460px]">
       <div className="px-5 py-4 border-b border-border">
-        <h2 className="text-[15px] font-semibold text-text">New workspace</h2>
+        <h2 className="text-[15px] font-semibold text-text">{t('createWorkspace.dialogTitle')}</h2>
         <p className="text-[12px] text-text-muted mt-0.5">
-          Spawn a fresh harness instance — a managed, persistent agent session.
+          {t('createWorkspace.dialogSubtitle')}
         </p>
       </div>
       <div className="px-5 py-4">

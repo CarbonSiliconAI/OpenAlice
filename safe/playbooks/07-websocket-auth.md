@@ -114,9 +114,15 @@ in.
   6-character workspace SIDs. Unauth attackers can't reach the upgrade
   path now, but an authenticated curious user could enumerate. Sessions
   should be ≥128-bit entropy if we plan multi-user later.
-- **Origin header on upgrade**: handler already rejects non-allowlisted
-  Origins (`isOriginAllowed`). Verify this fires before auth (it should,
-  to leak less).
+- **Origin header on upgrade**: handler rejects cross-origin browsers
+  before auth (`isWsOriginAllowed`, unit-specced in
+  `src/webui/workspaces-ws.spec.ts`). Same-origin — Origin host equal
+  to the Host header — is always allowed (2026-06-11; previously a
+  static localhost-only allowlist, which broke documented LAN/Tailscale
+  self-hosting). A browser's Origin is not forgeable from a foreign
+  page, so same-origin acceptance admits exactly the pages Alice served
+  itself; the `WEB_TERMINAL_ALLOWED_ORIGINS` allowlist covers
+  cross-origin topologies.
 - **Slowloris on upgrade**: holding an upgrade handshake open without
   finishing — Node default timeouts should kill, but verify.
 

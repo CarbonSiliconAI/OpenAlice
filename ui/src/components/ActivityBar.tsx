@@ -1,6 +1,7 @@
 import { type LucideIcon, MessageSquare, Inbox, Telescope, LineChart, GitBranch, BarChart3, Newspaper, Zap, Settings, Code2, TerminalSquare, ChevronDown, Info } from 'lucide-react'
 import { useState } from 'react'
 import { type Page } from '../App'
+import { findSectionForActivity } from '../sections'
 import { useWorkspace } from '../tabs/store'
 import type { ActivitySection, ViewSpec } from '../tabs/types'
 import { useUnreadInboxCount } from '../live/inbox-read'
@@ -233,9 +234,13 @@ export function ActivityBar({ open, onClose, onItemActivated }: ActivityBarProps
                       const sec = activitySectionFor(item.page)
                       const isActive = selectedSidebar === sec
                       const Icon = item.icon
+                      // Sidebar-less activity (no entry in SECTION_BY_KEY):
+                      // pure navigation — clicking opens the default tab
+                      // full-width; no collapse toggle, no secondary drawer.
+                      const hasSidebar = findSectionForActivity(sec) != null
                       const handleClick = () => {
                         let landedOn: ActivitySection | null
-                        if (selectedSidebar === sec) {
+                        if (selectedSidebar === sec && hasSidebar) {
                           // Same section re-clicked: toggle sidebar off. Don't
                           // touch the focused tab — collapsing the sidebar
                           // shouldn't change what's in the editor.
@@ -248,7 +253,9 @@ export function ActivityBar({ open, onClose, onItemActivated }: ActivityBarProps
                           // activities (Chat, Settings, Trading-as-Git, …) leave
                           // tab focus alone — user picks from the sidebar.
                           if (item.defaultTab) openOrFocus(item.defaultTab)
-                          landedOn = sec
+                          // Sidebar-less activities report null so mobile
+                          // dismisses instead of opening the secondary drawer.
+                          landedOn = hasSidebar ? sec : null
                         }
                         // Let parent decide the mobile transition (drill into
                         // secondary drawer vs dismiss). Default: just close.

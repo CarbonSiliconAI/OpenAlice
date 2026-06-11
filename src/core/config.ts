@@ -1,11 +1,66 @@
 import { z } from 'zod'
-import { readFile, writeFile, mkdir, unlink, rm } from 'fs/promises'
-import { resolve } from 'path'
+import { readFile, writeFile, mkdir, unlink, rm, rename, chmod } from 'fs/promises'
+import { resolve, join, dirname } from 'path'
+import { homedir } from 'os'
 import { newsCollectorSchema } from '../domain/news/config.js'
 import { runMigrations } from '../migrations/runner.js'
 import { dataPath } from '@/core/paths.js'
+import { isSealedEnvelope, seal, unseal } from './sealing.js'
 
 const CONFIG_DIR = dataPath('config')
+
+// ==================== Global provider keys (cross-checkout) ====================
+// Data-vendor API keys (FRED / FMP / EIA / BLS / …) are USER-level, not
+// instance-level: a fresh checkout or worktree starts with an empty
+// data/config and would otherwise ask for every key again. They live in
+// ~/.openalice/provider-keys.json (the same user-global root the workspace
+// launcher uses) and merge UNDER the instance file — a local value always
+// wins. Broker credentials deliberately stay instance-local: data/ next to
+// the source tree is the audit boundary for anything money-capable.
+
+/** Resolved per call (not module-const) so tests / portable installs can
+ *  point it elsewhere via OPENALICE_GLOBAL_DIR. */
+function globalProviderKeysFile(): string {
+  const root = process.env['OPENALICE_GLOBAL_DIR'] ?? join(homedir(), '.openalice')
+  return join(root, 'provider-keys.json')
+}
+
+async function readGlobalProviderKeys(): Promise<Record<string, string>> {
+  try {
+    const raw: unknown = JSON.parse(await readFile(globalProviderKeysFile(), 'utf-8'))
+    if (typeof raw !== 'object' || raw === null) return {}
+    return Object.fromEntries(
+      Object.entries(raw).filter(([, v]) => typeof v === 'string' && v !== ''),
+    ) as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+
+/** Fill providerKeys gaps from the user-global file (local wins per key). */
+async function applyGlobalProviderKeys<T extends { providerKeys: object }>(parsed: T): Promise<T> {
+  const keys = parsed.providerKeys as Record<string, string | undefined>
+  const global = await readGlobalProviderKeys()
+  for (const [k, v] of Object.entries(global)) {
+    if (!keys[k]) keys[k] = v
+  }
+  return parsed
+}
+
+/** Mirror a Settings save back to the user-global file so every future
+ *  checkout starts with the keys. An EXPLICIT empty string clears the key
+ *  globally too — otherwise a deleted key resurrects in each new worktree;
+ *  keys absent from the payload are left untouched. */
+async function mirrorProviderKeysToGlobal(keys: Record<string, string | undefined>): Promise<void> {
+  const global = await readGlobalProviderKeys()
+  for (const [k, v] of Object.entries(keys)) {
+    if (typeof v === 'string' && v.trim() !== '') global[k] = v
+    else if (v === '') delete global[k]
+  }
+  const file = globalProviderKeysFile()
+  await mkdir(dirname(file), { recursive: true })
+  await writeFile(file, JSON.stringify(global, null, 2) + '\n')
+}
 
 // ==================== Individual Schemas ====================
 
@@ -178,7 +233,6 @@ const securitiesSchema = z.object({
 
 const marketDataSchema = z.object({
   enabled: z.boolean().default(true),
-  apiUrl: z.string().default('http://localhost:6900'),
   providers: z.object({
     equity: z.string().default('yfinance'),
     crypto: z.string().default('yfinance'),
@@ -203,7 +257,13 @@ const marketDataSchema = z.object({
     tiingo: z.string().optional(),
     biztoc: z.string().optional(),
   }).default({}),
-  backend: z.enum(['typebb-sdk', 'openbb-api']).default('typebb-sdk'),
+  /** Hosted reference-data hub (TraderHub). Enabled by default: anonymous
+   *  GETs of public boards, no user data attached; one switch to opt out.
+   *  Self-hosters point baseUrl at their own instance. */
+  hub: z.object({
+    enabled: z.boolean().default(true),
+    baseUrl: z.string().default('https://traderhub.openalice.ai'),
+  }).default({ enabled: true, baseUrl: 'https://traderhub.openalice.ai' }),
 })
 
 const compactionSchema = z.object({
@@ -394,7 +454,7 @@ export async function loadConfig(): Promise<Config> {
     agent:         await parseAndSeed(files[1], agentSchema, raws[1]),
     crypto:        await parseAndSeed(files[2], cryptoSchema, raws[2]),
     securities:    await parseAndSeed(files[3], securitiesSchema, raws[3]),
-    marketData:    await parseAndSeed(files[4], marketDataSchema, raws[4]),
+    marketData:    await applyGlobalProviderKeys(await parseAndSeed(files[4], marketDataSchema, raws[4])),
     compaction:    await parseAndSeed(files[5], compactionSchema, raws[5]),
     aiProvider:    await parseAndSeed(files[6], aiProviderSchema, raws[6]),
     snapshot:      await parseAndSeed(files[7], snapshotSchema, raws[7]),
@@ -540,16 +600,49 @@ function migrateLegacyUTA(raw: Record<string, unknown>): Record<string, unknown>
   return null
 }
 
+/**
+ * Write the accounts file sealed (AES-256-GCM envelope, see sealing.ts) and
+ * owner-only. Every accounts.json write funnels here so no code path can
+ * regress to plaintext credentials at rest.
+ */
+async function writeAccountsFile(validated: UTAConfig[]): Promise<void> {
+  await mkdir(CONFIG_DIR, { recursive: true })
+  const path = resolve(CONFIG_DIR, 'accounts.json')
+  await writeFile(path, JSON.stringify(await seal(validated), null, 2) + '\n', { mode: 0o600 })
+  await chmod(path, 0o600).catch(() => { /* noop — platform without chmod */ })
+}
+
 // File name on disk stays `accounts.json` — internal-only, never
 // user-visible. Renaming would require another migration block; cost
 // outweighs benefit. The on-disk schema is the new UTA shape.
 export async function readUTAsConfig(): Promise<UTAConfig[]> {
-  const raw = await loadJsonFile('accounts.json')
+  let raw = await loadJsonFile('accounts.json')
   if (raw === undefined) {
-    // Seed empty file on first run
-    await mkdir(CONFIG_DIR, { recursive: true })
-    await writeFile(resolve(CONFIG_DIR, 'accounts.json'), '[]\n')
+    // Seed empty (sealed) file on first run — also materializes sealing.key
+    // early, so later credential writes never race key creation.
+    await writeAccountsFile([])
     return []
+  }
+
+  // Sealed envelope — the normal at-rest shape. A plain array is the legacy
+  // plaintext form: still readable (migration 0009 reseals it at boot).
+  if (isSealedEnvelope(raw)) {
+    try {
+      raw = await unseal(raw)
+    } catch (err) {
+      // Recoverable, loudly: quarantine the unreadable file (never delete —
+      // it's the user's broker config, the key may resurface) and continue
+      // with an empty store so the app still boots.
+      const quarantine = resolve(CONFIG_DIR, `accounts.json.sealed-unreadable-${Date.now()}`)
+      await rename(resolve(CONFIG_DIR, 'accounts.json'), quarantine)
+      console.error(
+        `accounts.json could not be unsealed: ${err instanceof Error ? err.message : String(err)}\n` +
+        `The file was preserved at ${quarantine}. Starting with an empty account store — ` +
+        `re-enter broker credentials in Settings → Trading.`,
+      )
+      await writeAccountsFile([])
+      return []
+    }
   }
 
   // Auto-migrate the pre-preset shape ({type, brokerConfig}) into the
@@ -580,7 +673,7 @@ export async function readUTAsConfig(): Promise<UTAConfig[]> {
     )
 
     const validated = utasFileSchema.parse(migrated)
-    await writeFile(resolve(CONFIG_DIR, 'accounts.json'), JSON.stringify(validated, null, 2) + '\n')
+    await writeAccountsFile(validated)
     return validated
   }
 
@@ -589,8 +682,7 @@ export async function readUTAsConfig(): Promise<UTAConfig[]> {
 
 export async function writeUTAsConfig(utas: UTAConfig[]): Promise<void> {
   const validated = utasFileSchema.parse(utas)
-  await mkdir(CONFIG_DIR, { recursive: true })
-  await writeFile(resolve(CONFIG_DIR, 'accounts.json'), JSON.stringify(validated, null, 2) + '\n')
+  await writeAccountsFile(validated)
 }
 
 /**
@@ -601,7 +693,7 @@ export async function writeUTAsConfig(utas: UTAConfig[]): Promise<void> {
  * No-op if the directory doesn't exist; never touches `data/config/`.
  */
 export async function wipeUTATradingData(id: string): Promise<void> {
-  const dir = resolve('data', 'trading', id)
+  const dir = dataPath('trading', id)
   await rm(dir, { recursive: true, force: true })
 }
 
@@ -653,9 +745,9 @@ export async function readAIProviderConfig() {
 export async function readMarketDataConfig() {
   try {
     const raw = JSON.parse(await readFile(resolve(CONFIG_DIR, 'market-data.json'), 'utf-8'))
-    return marketDataSchema.parse(raw)
+    return applyGlobalProviderKeys(marketDataSchema.parse(raw))
   } catch {
-    return marketDataSchema.parse({})
+    return applyGlobalProviderKeys(marketDataSchema.parse({}))
   }
 }
 
@@ -804,6 +896,10 @@ export async function writeConfigSection(section: ConfigSection, data: unknown):
   const validated = schema.parse(data)
   await mkdir(CONFIG_DIR, { recursive: true })
   await writeFile(resolve(CONFIG_DIR, sectionFiles[section]), JSON.stringify(validated, null, 2) + '\n')
+  if (section === 'marketData') {
+    const keys = (validated as { providerKeys?: Record<string, string | undefined> }).providerKeys
+    if (keys) await mirrorProviderKeysToGlobal(keys)
+  }
   return validated
 }
 

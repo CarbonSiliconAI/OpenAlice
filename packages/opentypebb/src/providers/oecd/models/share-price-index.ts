@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { Fetcher } from '../../../core/provider/abstract/fetcher.js'
 import { SharePriceIndexDataSchema } from '../../../standard-models/share-price-index.js'
 import { EmptyDataError } from '../../../core/provider/utils/errors.js'
-import { fetchOecdCsv, resolveCountryCode, periodToDate, CODE_TO_NAME, FREQ_MAP, filterAndSort } from '../utils/oecd-helpers.js'
+import { fetchOecdCsv, resolveCountryCodes, periodToDate, CODE_TO_NAME, FREQ_MAP, filterAndSort } from '../utils/oecd-helpers.js'
 
 export const OECDSharePriceIndexQueryParamsSchema = z.object({
   country: z.string().default('united_states'),
@@ -29,11 +29,14 @@ export class OECDSharePriceIndexFetcher extends Fetcher {
     query: OECDSharePriceIndexQueryParams,
     _credentials: Record<string, string> | null,
   ): Promise<Record<string, unknown>[]> {
-    const cc = resolveCountryCode(query.country)
+    const cc = resolveCountryCodes(query.country)
     const freq = FREQ_MAP[query.frequency] ?? 'M'
     const rows = await fetchOecdCsv(
-      'OECD.SDD.STES,DSD_KEI@DF_KEI,4.0',
-      `${cc}.${freq}.SHARE._Z.IX._T.`,
+      // DSD_KEI was retired in the OECD SDMX reshuffle; share prices live
+      // in the Financial market dataflow now (9-dim key, wildcards after
+      // MEASURE select IX/_Z/.../N automatically — only one series exists).
+      'OECD.SDD.STES,DSD_STES@DF_FINMARK',
+      `${cc}.${freq}.SHARE......`,
     )
 
     return rows

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { FxService } from './fx-service.js'
 import type { CurrencyClientLike } from '@/domain/market-data/client/types.js'
 
@@ -171,5 +171,58 @@ describe('FxService', () => {
     const fx = new FxService(client)
     const rate = await fx.getRate('hkd')
     expect(rate.rate).toBe(0.1282)
+  })
+})
+
+describe('hub FX table', () => {
+  const HUB = { enabled: true, baseUrl: 'https://hub.test' }
+  const fetchSpy = vi.fn()
+
+  beforeEach(() => {
+    fetchSpy.mockReset()
+    vi.stubGlobal('fetch', fetchSpy)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  const table = (eur: number) => new Response(JSON.stringify({
+    counter: 'USD',
+    rates: { EUR: { rate: eur, updatedAt: '2026-06-11T00:00:00Z' } },
+  }))
+
+  it('serves rates from the hub table before the vendor client', async () => {
+    fetchSpy.mockResolvedValue(table(1.155))
+    const client = makeMockClient([{ base_currency: 'EUR', counter_currency: 'USD', last_rate: 9.99 }])
+    const svc = new FxService(client, 5 * 60_000, HUB)
+    const rate = await svc.getRate('EUR')
+    expect(rate.rate).toBe(1.155)
+    expect(rate.source).toBe('live')
+  })
+
+  it('one GET covers subsequent currencies (table cached)', async () => {
+    fetchSpy.mockResolvedValue(table(1.155))
+    const svc = new FxService(undefined, 5 * 60_000, HUB)
+    await svc.getRate('EUR')
+    await svc.getRate('EUR')
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls through to the vendor client when the hub fails', async () => {
+    fetchSpy.mockResolvedValue(new Response('down', { status: 502 }))
+    const client = makeMockClient([{ base_currency: 'EUR', counter_currency: 'USD', last_rate: 1.08 }])
+    const svc = new FxService(client, 5 * 60_000, HUB)
+    const rate = await svc.getRate('EUR')
+    expect(rate.rate).toBe(1.08)
+  })
+
+  it('rejects insane rates (zero/negative) at the shape boundary', async () => {
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify({
+      counter: 'USD',
+      rates: { EUR: { rate: -5, updatedAt: 'x' } },
+    })))
+    const svc = new FxService(undefined, 5 * 60_000, HUB)
+    const rate = await svc.getRate('EUR')
+    expect(rate.source).toBe('default') // fell through to the table
   })
 })

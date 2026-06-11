@@ -47,17 +47,21 @@ const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 60_000;
  *     backend serves the UI bundle at the same origin, browser hits it
  *     directly. Same-origin in practice but Origin header is still set
  *     and CORS check fires.
- *   - `localhost:5173` / `127.0.0.1:5173` — contributor-dev: Vite dev
- *     server proxies API/WS to the backend; browser's origin is 5173.
+ *   - `localhost:<uiPort>` / `127.0.0.1:<uiPort>` — contributor-dev: Vite
+ *     dev server proxies API/WS to the backend; browser's origin is the
+ *     Vite port. Guardian resolves it (probe from 5173) and injects
+ *     `OPENALICE_UI_PORT` so the allowlist tracks the real frontend even
+ *     when 5173 was taken; standalone Vite (no orchestrator) keeps the
+ *     5173 default.
  *
  * The cloud-demo topology (future https://app.openalice.io) is intentionally
  * NOT in the default list — that's an opt-in addition driven by config when
  * the cloud demo ships.
  */
-export function buildDefaultOrigins(webPort: number): string[] {
+export function buildDefaultOrigins(webPort: number, uiPort = 5173): string[] {
   return [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
+    `http://localhost:${uiPort}`,
+    `http://127.0.0.1:${uiPort}`,
     `http://localhost:${webPort}`,
     `http://127.0.0.1:${webPort}`,
   ];
@@ -75,7 +79,10 @@ export function loadConfig(opts: LoadConfigOptions): ServerConfig {
 
   const command = parseCommand(env['WEB_TERMINAL_COMMAND']);
 
-  const originsRaw = (env['WEB_TERMINAL_ALLOWED_ORIGINS'] ?? buildDefaultOrigins(opts.webPort).join(','))
+  // Guardian-injected Vite dev-server port; 5173 when running without the
+  // orchestrator (standalone Vite, prod — where no UI origin drift exists).
+  const uiPort = parseIntEnv(env['OPENALICE_UI_PORT'], 5173, 1, 65535);
+  const originsRaw = (env['WEB_TERMINAL_ALLOWED_ORIGINS'] ?? buildDefaultOrigins(opts.webPort, uiPort).join(','))
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);

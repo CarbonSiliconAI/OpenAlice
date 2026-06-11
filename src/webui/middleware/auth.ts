@@ -118,10 +118,20 @@ export function createAuthMiddleware(opts: AuthMiddlewareOptions): MiddlewareHan
 }
 
 /** Extracts the Node socket-level remote address from the Hono context. */
-function getSocketRemoteAddress(c: Context): string | undefined {
+export function getSocketRemoteAddress(c: Context): string | undefined {
   // @hono/node-server exposes the raw Node IncomingMessage as c.env.incoming
   const env = c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined
   return env?.incoming?.socket?.remoteAddress
+}
+
+/**
+ * Normalize an IP literal for comparison: strip the IPv6 zone suffix
+ * (fe80::1%eth0 → fe80::1) and unwrap IPv4-mapped IPv6
+ * (::ffff:10.0.0.5 → 10.0.0.5).
+ */
+export function normalizeIp(ip: string): string {
+  const cleaned = ip.split('%')[0]
+  return cleaned.startsWith('::ffff:') ? cleaned.slice(7) : cleaned
 }
 
 /**
@@ -130,10 +140,7 @@ function getSocketRemoteAddress(c: Context): string | undefined {
  */
 export function isLoopbackIp(ip: string): boolean {
   if (!ip) return false
-  // Strip IPv6 zone suffix (fe80::1%eth0 → fe80::1)
-  const cleaned = ip.split('%')[0]
-  // IPv4-mapped IPv6
-  const norm = cleaned.startsWith('::ffff:') ? cleaned.slice(7) : cleaned
+  const norm = normalizeIp(ip)
   if (norm === '::1') return true
   // IPv4 — accept the entire 127.0.0.0/8 range, not just 127.0.0.1
   if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(norm)) return true

@@ -8,11 +8,12 @@ import { Fetcher } from '../../../core/provider/abstract/fetcher.js'
 import { ShortTermEnergyOutlookQueryParamsSchema, ShortTermEnergyOutlookDataSchema } from '../../../standard-models/short-term-energy-outlook.js'
 import { EmptyDataError } from '../../../core/provider/utils/errors.js'
 import { amakeRequest } from '../../../core/provider/utils/helpers.js'
+import { resolveKeyedOrigin } from '../../../core/provider/utils/hub-proxy.js'
 
 export const EIAShortTermEnergyOutlookQueryParamsSchema = ShortTermEnergyOutlookQueryParamsSchema
 export type EIAShortTermEnergyOutlookQueryParams = z.infer<typeof EIAShortTermEnergyOutlookQueryParamsSchema>
 
-const EIA_STEO_URL = 'https://api.eia.gov/v2/steo/data/'
+const EIA_STEO_PATH = '/v2/steo/data'
 
 // Map categories to EIA STEO series
 const CATEGORY_SERIES: Record<string, { series: string; unit: string }> = {
@@ -45,7 +46,8 @@ export class EIAShortTermEnergyOutlookFetcher extends Fetcher {
     query: EIAShortTermEnergyOutlookQueryParams,
     credentials: Record<string, string> | null,
   ): Promise<Record<string, unknown>[]> {
-    const apiKey = credentials?.eia_api_key ?? credentials?.api_key ?? ''
+    const { key: apiKey, origin } = resolveKeyedOrigin(
+      credentials?.eia_api_key ?? credentials?.api_key, 'https://api.eia.gov', 'eia')
     const catInfo = CATEGORY_SERIES[query.category]
     if (!catInfo) throw new EmptyDataError(`Unknown STEO category: ${query.category}`)
 
@@ -53,7 +55,6 @@ export class EIAShortTermEnergyOutlookFetcher extends Fetcher {
     // see https://www.eia.gov/opendata/documentation.php. The JSON form
     // is silently rejected with HTTP 403 on most endpoints.
     const params = new URLSearchParams({
-      api_key: apiKey,
       frequency: 'monthly',
       'data[0]': 'value',
       'facets[seriesId][]': catInfo.series,
@@ -64,8 +65,9 @@ export class EIAShortTermEnergyOutlookFetcher extends Fetcher {
 
     if (query.start_date) params.set('start', query.start_date.slice(0, 7)) // YYYY-MM
     if (query.end_date) params.set('end', query.end_date.slice(0, 7))
+    if (apiKey) params.set('api_key', apiKey)
 
-    const url = `${EIA_STEO_URL}?${params.toString()}`
+    const url = `${origin}${EIA_STEO_PATH}?${params.toString()}`
     const data = await amakeRequest<EiaSteoResponse>(url)
 
     // Determine current date to flag forecasts

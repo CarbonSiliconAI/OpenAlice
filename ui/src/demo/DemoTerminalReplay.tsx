@@ -3,10 +3,11 @@ import type { ReactElement } from 'react'
 
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { WebglAddon } from '@xterm/addon-webgl'
+import type { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal as Xterm } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
+import { attachWebglRenderer } from '../components/workspace/renderer'
 import { darkTheme } from '../components/workspace/theme'
 import { DemoTerminalStub } from './DemoTerminalStub'
 import { transcriptsByWorkspace } from './fixtures/transcripts'
@@ -93,12 +94,9 @@ function ReplayPane({ label, transcript }: { label: string; transcript: Transcri
         window.setTimeout(init, 25)
         return
       }
-      try {
-        webgl = new WebglAddon()
-        term.loadAddon(webgl)
-      } catch {
-        // WebGL addon is best-effort; fall back to DOM renderer silently.
-      }
+      // Best-effort WebGL (shared loader: escape-hatch flag + context-loss
+      // degradation); falls back to the DOM renderer silently.
+      webgl = attachWebglRenderer(term)
       try { fit.fit() } catch { /* noop */ }
       resizeObserver = new ResizeObserver(() => {
         try { fit.fit() } catch { /* noop */ }

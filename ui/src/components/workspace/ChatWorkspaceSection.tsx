@@ -26,18 +26,6 @@ import { CreateWorkspaceDialog } from './CreateWorkspaceDialog'
 
 const CHAT_TEMPLATE = 'chat'
 
-function defaultTagFor(workspaces: readonly Workspace[]): string {
-  const now = new Date()
-  const month = now.toLocaleString('en-US', { month: 'short' }).toLowerCase()
-  const day = now.getDate()
-  const base = `chat-${month}${day}`
-  const taken = new Set(workspaces.map((w) => w.tag))
-  if (!taken.has(base)) return base
-  let i = 2
-  while (taken.has(`${base}-${i}`)) i++
-  return `${base}-${i}`
-}
-
 export function ChatWorkspaceSection(): ReactElement | null {
   const { t } = useTranslation()
   const ctx = useWorkspaces()
@@ -94,7 +82,6 @@ export function ChatWorkspaceSection(): ReactElement | null {
           templates={ctx.templates}
           agents={ctx.agents}
           presetTemplate={CHAT_TEMPLATE}
-          initialTag={defaultTagFor(ctx.workspaces)}
           onCreated={(workspace) => {
             ctx.refresh()
             openOrFocus({ kind: 'workspace', params: { wsId: workspace.id } })

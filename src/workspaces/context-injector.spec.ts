@@ -48,12 +48,12 @@ describe('resolveInjection (toolAccess)', () => {
     const t = makeTemplate({ injectMcp: true, bundledSkills: ['scan-value-chain'] });
     const r = resolveInjection(t, 'cli');
     expect(r.injectMcp).toBe('inbox');
-    expect(r.bundledSkills).toEqual(['scan-value-chain', 'openalice-cli']);
+    expect(r.bundledSkills).toEqual(['scan-value-chain', 'openalice-cli', 'traderhub']);
   });
 
   it('cli mode does not duplicate an already-present openalice-cli', () => {
     const t = makeTemplate({ injectMcp: true, bundledSkills: ['openalice-cli'] });
-    expect(resolveInjection(t, 'cli').bundledSkills).toEqual(['openalice-cli']);
+    expect(resolveInjection(t, 'cli').bundledSkills).toEqual(['openalice-cli', 'traderhub']);
   });
 
   it('a non-injectable template (injectMcp false) ignores toolAccess', () => {

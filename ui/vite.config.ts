@@ -40,13 +40,35 @@ function readBackendPort(): number {
 
 const backendPort = readBackendPort()
 
+/**
+ * Resolve the dev-server port. Two modes:
+ *
+ *   1. `OPENALICE_UI_PORT` env — set by `scripts/guardian/dev.ts`, which
+ *      already probed the port for availability. Bind exactly it
+ *      (strictPort): if Vite silently drifted off the value Guardian
+ *      printed and injected into the backend's WS-origin allowlist, the
+ *      banner URL would lie and the workspace terminal would break.
+ *   2. standalone (`pnpm --filter open-alice-ui dev`, no orchestrator) —
+ *      Vite's classic 5173 + auto-increment behavior, unchanged.
+ */
+function readUiPort(): { port: number; strictPort: boolean } {
+  const envPort = Number.parseInt(process.env['OPENALICE_UI_PORT'] ?? '', 10)
+  if (Number.isFinite(envPort) && envPort > 0 && envPort <= 65535) {
+    return { port: envPort, strictPort: true }
+  }
+  return { port: 5173, strictPort: false }
+}
+
+const { port: uiPort, strictPort } = readUiPort()
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // Dev server on port 5173 with API proxy to the backend.
+  // Dev server with API proxy to the backend.
   // Backend port is read from `data/config/connectors.json` (web.port) so
   // changing the backend port in one place propagates to Vite automatically.
   server: {
-    port: 5173,
+    port: uiPort,
+    strictPort,
     proxy: {
       '/api': {
         target: `http://localhost:${backendPort}`,

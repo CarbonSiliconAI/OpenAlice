@@ -202,6 +202,19 @@ body,
   padding-left: 1.5em;
   margin: 0.5em 0;
 }
+/* Tailwind preflight resets list-style to none — restore markers. */
+.markdown-content ul {
+  list-style: disc;
+}
+.markdown-content ol {
+  list-style: decimal;
+}
+.markdown-content li {
+  margin: 0.25em 0;
+}
+.markdown-content li::marker {
+  color: var(--color-text-muted);
+}
 /* Obsidian-style [[name]] wikilinks → clickable entity references. */
 .markdown-content a.wikilink {
   color: var(--color-accent);

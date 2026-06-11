@@ -89,6 +89,20 @@ export function resolveCountryCode(country: string): string {
 }
 
 /**
+ * Resolve one or many countries ("united_states,china") to an SDMX
+ * REF_AREA filter ("USA+CHN"). Batching countries into ONE request is the
+ * difference between a dashboard load costing N calls and 1 call against
+ * OECD's small anonymous per-IP quota.
+ */
+export function resolveCountryCodes(country: string): string {
+  return country
+    .split(',')
+    .map((c) => resolveCountryCode(c.trim()))
+    .filter(Boolean)
+    .join('+')
+}
+
+/**
  * Apply date filters and sort results.
  */
 export function filterAndSort<T extends { date?: unknown }>(

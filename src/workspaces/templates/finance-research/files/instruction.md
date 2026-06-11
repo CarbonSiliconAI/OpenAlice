@@ -25,7 +25,7 @@ See `.openalice-finance-info` for the exact upstream commit and the actual list 
 
 This workspace gives you **two market-data surfaces** that overlap. Use them deliberately:
 
-1. **OpenAlice's own MCP tools** (`/mcp` → `openalice`) — quotes, fundamentals, indicators, news. These are the **Alice canonical layer** wired to FMP / typebb / OpenBB. **Use these when a number will inform a trading decision** (UTA, position sizing, order routing) so the data口径 stays consistent with what Alice's trading engine sees.
+1. **OpenAlice's own MCP tools** (`/mcp` → `openalice`) — quotes, fundamentals, indicators, news. These are the **Alice canonical layer**: low-frequency data is served hub-first from the hosted TraderHub with the instance's own provider keys as fallback. **Use these when a number will inform a trading decision** (UTA, position sizing, order routing) so the data口径 stays consistent with what Alice's trading engine sees.
 2. **finance-skills** — yfinance, Funda AI, opencli, social readers. **Use these to cover angles Alice doesn't ship** (Yahoo Finance historical depth, SaaS valuation compression, social sentiment, peer-screened correlation studies, etc.).
 
 Don't cross the streams: don't quote yfinance to make a UTA order routing call. Don't quote Alice's MCP to do a Twitter sentiment scan.
@@ -34,7 +34,7 @@ Don't cross the streams: don't quote yfinance to make a UTA order routing call. 
 
 `.mcp.json` points at OpenAlice's MCP server (`http://127.0.0.1:47332/mcp` by default, or `$OPENALICE_MCP_URL`). The full OpenAlice tool surface — trading, market data, news, indicators — is available alongside the bundled skills.
 
-The same **Alice canonical layer** is also on your shell PATH as the `alice` CLI (`alice --help`, `alice market search --query AAPL`, `alice news grep --pattern …` → `alice news read --id …`). Use it for quick scripted lookups — it's the same data口径 as the `openalice` MCP tools (trading/cron stay MCP-only).
+The same **Alice canonical layer** is also on your shell PATH as CLIs: `traderhub` for low-frequency market data (`traderhub board get --board macro`, `traderhub equity profile --symbol AAPL` — see the `traderhub` skill) and `alice` for workbench surfaces (`alice market search --query AAPL`, `alice rss grep --pattern …` → `alice rss read --id …`). Same data口径 as the `openalice` MCP tools (trading/cron stay MCP-only).
 
 To verify on first attach:
 
